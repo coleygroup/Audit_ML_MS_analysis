@@ -1,13 +1,27 @@
 # Why Does Machine Learning Fail for Small-Molecule Mass Spectrometry?
 
-This repository accompanies our study on the limitations of current machine learning approaches for small-molecule mass spectrometry. 
+This repository contains the code, analysis, and evaluation pipelines used for benchmarking machine learning models for small-molecule mass spectrometry tasks.
 
-We systematically investigate why modern ML models, despite strong performance on benchmark datasets, often fail to outperform simple baselines such as nearest neighbour. 
+The goal of this project is to systematically evaluate existing models and proposed methods under consistent experimental settings, and to provide reproducible scripts for all results reported in the paper.
+
+---
+
+# Quick Start
+
+## 1. Clone repository
+```bash
+git clone https://github.com/ML_MS_analysis.git
+cd your-repo-name
+
+## 2. Installation
+conda create -n massspec_benchmark python=3.10
+conda activate massspec_benchmark
+pip install -r requirements.txt
 
 # Data Availability
 Due to licensing restrictions, we are **unable to redistribute the NIST 2023 Mass Spectral Library**.
 
-## What we provide
+# What we provide
 
 We include all materials that can be legally shared:
 
@@ -18,3 +32,37 @@ We include all materials that can be legally shared:
 - Scripts to reproduce all results and figures  
 
 These resources allow full reproduction of our experiments for open-sourced datasets.
+
+# Benchmarked_models
+
+This folder contains implementations and prediction outputs for all benchmarked models.
+
+Subfolders:
+
+    - mist/
+    Implementation and outputs for the MIST model.
+
+    - nearestneighbour/
+    Nearest-neighbour baselines (MS similarity, embedding-based retrieval, etc.).
+
+    - our_models/
+    Implementations and outputs for other models proposed in this work.
+
+    Each subfolder contains:
+        - Training scripts
+        - Inference scripts
+        - Evaluation utilities
+
+        saved predictions (where applicable)
+            These subfolders contain all fo teh different odels. 
+            Due to the file size, we will upload the checkpoints to zenodo and provide instructions on how to download the checkpoints. 
+
+# Installation Instructions
+
+# Folders
+
+## data 
+
+## DreaMS
+
+## FP_prediction 

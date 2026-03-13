@@ -2,11 +2,19 @@
 
 This repository contains the code, analysis, and evaluation pipelines used for benchmarking machine learning models for small-molecule mass spectrometry tasks.
 
-The goal of this project is to systematically evaluate existing models and proposed methods under consistent experimental settings, and to provide reproducible scripts for all results reported in the paper.
-
 ---
 
-# Quick Start
+# Data
+
+All datasets used in this project will be made available via Google Drive.
+
+You can access the data here:
+
+https://drive.google.com/drive/folders/1v11lTwFSdlSRJ6ETLHqkbT809Ji9w0OY?usp=drive_link
+
+The folder contains the processed datasets and intermediate files required to reproduce the experiments reported in the paper.
+
+<!-- # Quick Start
 
 ## 1. Clone repository
 ```bash
@@ -65,4 +73,6 @@ Subfolders:
 
 ## DreaMS
 
-## FP_prediction 
+10.5281/zenodo.19007173
+
+## FP_prediction  -->

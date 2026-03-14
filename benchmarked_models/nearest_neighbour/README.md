@@ -18,8 +18,6 @@ nearest_neighbour/
 │
 ├── 02_compute_nn.py # Compute NN retrieval using spectral similarity
 │
-├── 03_get_nn_results.ipynb # Aggregate predictions and compute metrics
-│
 └── README.md
 ```
 ---
@@ -62,18 +60,6 @@ python 02_compute_nn.py
 ```
 
 This script computes nearest neighbours using traditional spectral similarity (e.g., cosine similarity on binned spectra) instead of learned embeddings.
-
-### 3. Aggregate Results 
-
-```bash 
-python 03_get_nn_results.ipynb
-```
-
-The notebook:
-   1. Loads nearest neighbour predictions
-   2. Computes evaluation metrics
-   3. Generates result tables used in the paper
-
 
 ### Notes 
    - Nearest neighbour retrieval is performed only against the training split.

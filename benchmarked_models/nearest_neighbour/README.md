@@ -8,18 +8,20 @@ This baseline provides a simple retrieval-based reference point for evaluating m
 
 ---
 # Folder Structure
-   nearest_neighbour/
-   │
-   ├── utils/ # Helper functions used by the scripts
-   │
-   ├── 01a_cache_dreaMS_emb.py # Compute and cache DreaMS embeddings
-   ├── 01b_compute_nn_dreaMS.py # Compute NN retrieval using DreaMS embeddings
-   │
-   ├── 02_compute_nn.py # Compute NN retrieval using spectral similarity
-   │
-   ├── 03_get_nn_results.ipynb # Aggregate predictions and compute metrics
-   │
-   └── README.md
+```
+nearest_neighbour/
+│
+├── utils/ # Helper functions used by the scripts
+│
+├── 01a_cache_dreaMS_emb.py # Compute and cache DreaMS embeddings
+├── 01b_compute_nn_dreaMS.py # Compute NN retrieval using DreaMS embeddings
+│
+├── 02_compute_nn.py # Compute NN retrieval using spectral similarity
+│
+├── 03_get_nn_results.ipynb # Aggregate predictions and compute metrics
+│
+└── README.md
+```
 ---
 
 # Pipeline

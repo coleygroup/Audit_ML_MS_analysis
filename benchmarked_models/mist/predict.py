@@ -8,6 +8,7 @@ import torch.nn.functional as F
 
 from utils import read_config, pickle_data, write_json
 from mist.data import datasets, splitter, featurizers
+from config_utils import update_mist_config
 
 from model.mist_model import MistNet
 
@@ -37,6 +38,9 @@ def batch_jaccard_index(FP_pred, FP):
     return jaccard_scores
 
 def get_checkpoint_path(folder):
+
+    if folder.endswith(".ckpt"):
+        return folder
 
     checkpoints = [f for f in os.listdir(folder) if f.endswith(".ckpt")]
     best_checkpoint, lowest_loss = "", 1e4
@@ -91,28 +95,7 @@ def batch_to_device(batch: dict, device) -> None:
             batch[key] = batch[key].to(device)
 
 def update_config(args, config):
-
-    config["args"] = args.__dict__
-
-    config["train_params"]["weight_decay"] = float(config["train_params"]["weight_decay"])
-    config["model"]["params"]["fp_names"] = config["dataset"]["fp_names"] 
-    config["model"]["params"]["magma_modulo"] = config["dataset"]["magma_modulo"]
-    config["model"]["params"]["magma_aux_loss"] = config["dataset"]["magma_aux_loss"]
-
-    config["model"]["params"]["learning_rate"] = config["train_params"]["learning_rate"] 
-    config["model"]["params"]["weight_decay"] = config["train_params"]["weight_decay"]
-    config["model"]["params"]["lr_decay_frac"] = config["train_params"]["lr_decay_frac"]
-    config["model"]["params"]["scheduler"] = config["train_params"]["scheduler"]
-
-    data_folder = config["dataset"]["data_folder"]
-    dataset = config["dataset"]["dataset"]
-    config["dataset"]["labels_file"] = os.path.join(data_folder, dataset, "labels.tsv")
-    config["dataset"]["subform_folder"] = os.path.join(data_folder, dataset, "subformulae", "default_subformulae/")
-    config["dataset"]["spec_folder"] = os.path.join(data_folder, dataset, "spec_folder")
-    config["dataset"]["magma_folder"] = os.path.join(data_folder, dataset, "magma_outputs", "magma_tsv")
-    config["dataset"]["split_file"] = os.path.join(data_folder, dataset, "splits", config["dataset"]["split_filename"])
-
-    return config
+    return update_mist_config(args, config)
 
 @torch.no_grad()
 def predict(model, config, device, threshold = 0.5):
@@ -166,12 +149,14 @@ def predict(model, config, device, threshold = 0.5):
 def main(args):
 
     # Get the checkpoint and config
-    checkpoint_dir = args.checkpoint 
+    checkpoint_dir = args.checkpoint
+    if checkpoint_dir.endswith(".ckpt"):
+        checkpoint_dir = os.path.dirname(checkpoint_dir)
     config = read_config(os.path.join(checkpoint_dir, "run.yaml"))
     config = update_config(args, config)
 
     # Get the model 
-    model = MistNet.load_from_checkpoint(get_checkpoint_path(checkpoint_dir))
+    model = MistNet.load_from_checkpoint(get_checkpoint_path(args.checkpoint))
     model.eval()
     model.to(args.device)
 
@@ -191,24 +176,7 @@ if __name__ == "__main__":
     parser.add_argument("--device", type = str, default = "cuda", help = "The device to use for prediction.")
     parser.add_argument("--checkpoint", type = str, help = "Path to a model checkpoint")
     args = parser.parse_args()
+    if args.checkpoint is None:
+        raise ValueError("--checkpoint must point to a checkpoint directory or .ckpt file")
 
-    # Manually add in (hack)
-    folder = "./best_models/canopus/"
-    all_folders = []
-    
-    for checkpoint in os.listdir(folder):
-        all_folders.append(os.path.join(folder, checkpoint))
-
-    for f in all_folders:
-
-        args.checkpoint = f
-        check_test_performance = os.path.exists(os.path.join(f, "test_performance.json"))
-        check_test_results = os.path.exists(os.path.join(f, "test_results.pkl"))
-
-        if check_test_performance:
-            assert check_test_results
-            continue 
-
-        print("Running prediction for: ", f)
-        main(args)
-        print("Prediction complete")
+    main(args)

@@ -13,7 +13,19 @@ import pytorch_lightning as pl
 from modules import modules
 from mist.data import featurizers
 
-from learning_to_split import compute_marginal_z_loss, compute_y_given_z_loss, compute_gap_loss
+try:
+    from learning_to_split import (
+        compute_marginal_z_loss,
+        compute_y_given_z_loss,
+        compute_gap_loss,
+    )
+except ImportError:
+    def _missing_learning_to_split(*args, **kwargs):
+        raise ImportError("learning_to_split is required only for MistNetSplitter")
+
+    compute_marginal_z_loss = _missing_learning_to_split
+    compute_y_given_z_loss = _missing_learning_to_split
+    compute_gap_loss = _missing_learning_to_split
 
 def cosine_loss(x, y):
 
@@ -22,6 +34,12 @@ def cosine_loss(x, y):
     return 1 - cosine_sim(
         x.expand(y.shape), y.float()
     ).unsqueeze(-1)
+
+def jaccard_loss(x, y, eps=1e-8):
+    """Soft Jaccard loss for probabilistic fingerprint predictions."""
+    intersection = (x * y.float()).sum(dim=-1)
+    union = x.sum(dim=-1) + y.float().sum(dim=-1) - intersection
+    return (1 - (intersection + eps) / (union + eps)).unsqueeze(-1)
 
 def BCE_loss(FP_pred, FP, pos_weight = 5):
 
@@ -92,7 +110,13 @@ class MistNet(pl.LightningModule):
         learning_rate: float = 0.1,
         lr_decay_frac: float = 0.1,
         weight_decay: float = 0.0,
-        scheduler: bool = False
+        scheduler: bool = False,
+        lr_decay_time: int = 10000,
+        cosine_schedule: bool = False,
+        cosine_eta_min: float = 0.0,
+        max_epochs: int = 600,
+        warmup_frac: float = 0.0,
+        **kwargs,
     ):
         """_summary_
 
@@ -130,6 +154,7 @@ class MistNet(pl.LightningModule):
         self.bce_loss = partial(BCE_loss, pos_weight = pos_weight)
         self.loss_name = loss_fn
         self.cosine_loss = cosine_loss
+        self.jaccard_loss = jaccard_loss
 
         if self.loss_name == "bce":
             self.loss_fn = self.bce_loss
@@ -138,8 +163,10 @@ class MistNet(pl.LightningModule):
             self.loss_fn = mse_loss
         elif self.loss_name == "cosine":
             self.loss_fn = self.cosine_loss
+        elif self.loss_name == "jaccard":
+            self.loss_fn = self.jaccard_loss
         else:
-            raise NotImplementedError()
+            raise NotImplementedError(f"Unknown loss_fn: {self.loss_name}")
 
         self.spectra_encoder = self._build_model(hidden_size = hidden_size, 
                                                  peak_attn_layers = peak_attn_layers,
@@ -164,6 +191,11 @@ class MistNet(pl.LightningModule):
         self.lr_decay_frac = lr_decay_frac
         self.weight_decay = weight_decay 
         self.scheduler = scheduler
+        self.lr_decay_time = lr_decay_time
+        self.cosine_schedule = cosine_schedule
+        self.cosine_eta_min = cosine_eta_min
+        self.max_epochs = max_epochs
+        self.warmup_frac = warmup_frac
 
     def _build_model(
         self,
@@ -309,7 +341,6 @@ class MistNet(pl.LightningModule):
         fp_loss, magma_loss, iterative_loss = None, None, None
 
         # Get FP Loss
-        print("Predicted FP", pred_fp)
         fp_loss_full = self.loss_fn(pred_fp, target_fp)
         fp_loss = fp_loss_full.mean(-1)
         pred_frag_fps = aux_outputs_spec.get("pred_frag_fps", None)
@@ -392,6 +423,7 @@ class MistNet(pl.LightningModule):
             ret_dict["loss"] = ret_dict["mol_loss"]
             ret_dict["cos_loss"] = self.cosine_loss(pred_fp, target_fp).mean()
             ret_dict["bce_loss"] = self.bce_loss(pred_fp, target_fp).mean()
+            ret_dict["jaccard_loss"] = self.jaccard_loss(pred_fp, target_fp).mean()
 
         return ret_dict
 
@@ -533,7 +565,41 @@ class MistNet(pl.LightningModule):
         )
 
         ## Scheduler
-        if not self.scheduler:
+        if self.cosine_schedule:
+            total_steps = getattr(self, "total_training_steps", None)
+            if total_steps is None:
+                raise RuntimeError(
+                    "cosine_schedule requires total_training_steps to be set "
+                    "before configure_optimizers is called."
+                )
+
+            warmup_steps = int(total_steps * self.warmup_frac)
+            cosine_steps = max(total_steps - warmup_steps, 1)
+            min_factor = (
+                self.cosine_eta_min / self.learning_rate
+                if self.learning_rate > 0
+                else 0.0
+            )
+
+            def lr_lambda(step):
+                if warmup_steps > 0 and step < warmup_steps:
+                    return (step + 1) / warmup_steps
+                progress = (step - warmup_steps) / cosine_steps
+                progress = min(max(progress, 0.0), 1.0)
+                cosine_decay = 0.5 * (1 + math.cos(math.pi * progress))
+                return min_factor + (1 - min_factor) * cosine_decay
+
+            scheduler = torch.optim.lr_scheduler.LambdaLR(optimizer, lr_lambda=lr_lambda)
+            ret = {
+                "optimizer": optimizer,
+                "lr_scheduler": {
+                    "scheduler": scheduler,
+                    "frequency": 1,
+                    "interval": "step",
+                },
+            }
+            return ret
+        elif not self.scheduler:
             return optimizer
         else:
             scheduler = build_lr_scheduler(
@@ -551,6 +617,9 @@ class MistNet(pl.LightningModule):
                 },
             }
             return ret
+
+    def lr_scheduler_step(self, scheduler, optimizer_idx=None, metric=None):
+        scheduler.step()
 
 class MistNetSplitter(pl.LightningModule):
 

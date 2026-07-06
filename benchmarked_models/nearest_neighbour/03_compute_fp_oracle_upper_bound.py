@@ -11,9 +11,7 @@ sys.path.insert(0, str(REPO_ROOT))
 from benchmarked_models.common.benchmark_utils import (  # noqa: E402
     SKIP_MISSING_FORMULA_POLICIES,
     VALID_CANDIDATE_POLICIES,
-    cosine_top1,
     fingerprint_to_bits,
-    jaccard_score,
     load_pickle,
     load_split_file,
     summarize_records,
@@ -45,15 +43,6 @@ def get_info_nist2023(folder, ids):
     return fp_info, formula_info, inchikey_info, smiles_info
 
 
-def candidate_indices(policy, train_formula, test_formula):
-    if policy == "all_train_candidates":
-        return np.arange(len(train_formula), dtype=int)
-    return np.asarray(
-        [idx for idx, formula in enumerate(train_formula) if formula == test_formula],
-        dtype=int,
-    )
-
-
 def formula_candidate_index(train_formula):
     index = {}
     for idx, formula in enumerate(train_formula):
@@ -64,13 +53,28 @@ def formula_candidate_index(train_formula):
     }
 
 
-def compute_nn_records(
+def jaccard_top1(query_fp, candidate_fps, candidate_popcounts):
+    """Return candidate index and max binary fingerprint Jaccard."""
+    query = np.asarray(query_fp, dtype=np.uint8)
+    candidates = np.asarray(candidate_fps, dtype=np.uint8)
+    query_popcount = int(query.sum())
+    intersections = candidates @ query
+    unions = candidate_popcounts + query_popcount - intersections
+    scores = np.divide(
+        intersections,
+        unions,
+        out=np.zeros_like(intersections, dtype=np.float32),
+        where=unions > 0,
+    )
+    idx = int(np.argmax(scores))
+    return idx, float(scores[idx])
+
+
+def compute_fp_oracle_records(
     dataset,
     split,
     train_ids,
     test_ids,
-    train_emb,
-    test_emb,
     fp_info,
     formula_info,
     inchikey_info,
@@ -78,7 +82,8 @@ def compute_nn_records(
     candidate_policy,
     batch_size=256,
 ):
-    train_fp = [fp_info[spec_id] for spec_id in train_ids]
+    train_fp = np.asarray([fp_info[spec_id] for spec_id in train_ids], dtype=np.uint8)
+    train_popcounts = train_fp.sum(axis=1).astype(np.float32)
     train_formula = np.asarray([formula_info.get(spec_id) for spec_id in train_ids])
     formula_to_candidates = (
         None
@@ -88,44 +93,45 @@ def compute_nn_records(
 
     records = []
     if candidate_policy == "all_train_candidates":
-        train_norm = np.linalg.norm(train_emb, axis=1)
-        train_normed = np.divide(
-            train_emb,
-            train_norm[:, None],
-            out=np.zeros_like(train_emb, dtype=np.float32),
-            where=train_norm[:, None] > 0,
-        )
+        train_fp_float = train_fp.astype(np.float32)
+        test_fp = np.asarray([fp_info[spec_id] for spec_id in test_ids], dtype=np.uint8)
+        test_popcounts = test_fp.sum(axis=1).astype(np.float32)
         for start in tqdm(range(0, len(test_ids), batch_size), desc=f"{dataset}/{split}"):
             end = min(start + batch_size, len(test_ids))
-            batch = test_emb[start:end]
-            batch_norm = np.linalg.norm(batch, axis=1)
-            batch_normed = np.divide(
-                batch,
-                batch_norm[:, None],
-                out=np.zeros_like(batch, dtype=np.float32),
-                where=batch_norm[:, None] > 0,
+            batch_fp = test_fp[start:end]
+            intersections = batch_fp.astype(np.float32) @ train_fp_float.T
+            unions = (
+                test_popcounts[start:end, None]
+                + train_popcounts[None, :]
+                - intersections
             )
-            sims = batch_normed @ train_normed.T
-            top_indices = np.argmax(sims, axis=1)
+            scores = np.divide(
+                intersections,
+                unions,
+                out=np.zeros_like(intersections, dtype=np.float32),
+                where=unions > 0,
+            )
+            top_indices = np.argmax(scores, axis=1)
             for offset, train_idx in enumerate(top_indices):
                 spec_id = test_ids[start + offset]
-                top_train_id = train_ids[int(train_idx)]
-                pred_fp = train_fp[int(train_idx)]
-                test_fp = fp_info[spec_id]
+                train_idx = int(train_idx)
+                top_train_id = train_ids[train_idx]
+                pred_fp = train_fp[train_idx]
+                score = float(scores[offset, train_idx])
                 records.append(
                     {
                         "dataset": dataset,
                         "split": split,
-                        "method": "dreams_embedding_nn",
+                        "method": "fingerprint_oracle_upper_bound",
                         "candidate_policy": candidate_policy,
                         "spec_id": spec_id,
                         "top_train_id": top_train_id,
                         "has_candidate": True,
-                        "similarity": float(sims[offset, train_idx]),
+                        "similarity": score,
                         "formula": formula_info.get(spec_id),
-                        "target_fp": test_fp.tolist(),
+                        "target_fp": batch_fp[offset].tolist(),
                         "pred_fp": pred_fp.tolist(),
-                        "jaccard": jaccard_score(pred_fp, test_fp),
+                        "jaccard": score,
                         "inchikey": inchikey_info.get(spec_id),
                         "smiles": smiles_info.get(spec_id),
                         "top_train_inchikey": inchikey_info.get(top_train_id),
@@ -134,10 +140,11 @@ def compute_nn_records(
                 )
         return records
 
-    for test_idx, spec_id in tqdm(list(enumerate(test_ids)), desc=f"{dataset}/{split}"):
-        test_formula = formula_info.get(spec_id)
+    for spec_id in tqdm(test_ids, desc=f"{dataset}/{split}"):
         test_fp = fp_info.get(spec_id)
+        test_formula = formula_info.get(spec_id)
         cand_idx = formula_to_candidates.get(test_formula, np.asarray([], dtype=int))
+
         if len(cand_idx) == 0:
             if candidate_policy in SKIP_MISSING_FORMULA_POLICIES:
                 continue
@@ -145,7 +152,7 @@ def compute_nn_records(
                 {
                     "dataset": dataset,
                     "split": split,
-                    "method": "dreams_embedding_nn",
+                    "method": "fingerprint_oracle_upper_bound",
                     "candidate_policy": candidate_policy,
                     "spec_id": spec_id,
                     "top_train_id": None,
@@ -161,7 +168,11 @@ def compute_nn_records(
             )
             continue
 
-        local_idx, similarity = cosine_top1(test_emb[test_idx], train_emb[cand_idx])
+        local_idx, score = jaccard_top1(
+            test_fp,
+            train_fp[cand_idx],
+            train_popcounts[cand_idx],
+        )
         train_idx = int(cand_idx[local_idx])
         top_train_id = train_ids[train_idx]
         pred_fp = train_fp[train_idx]
@@ -169,16 +180,16 @@ def compute_nn_records(
             {
                 "dataset": dataset,
                 "split": split,
-                "method": "dreams_embedding_nn",
+                "method": "fingerprint_oracle_upper_bound",
                 "candidate_policy": candidate_policy,
                 "spec_id": spec_id,
                 "top_train_id": top_train_id,
                 "has_candidate": True,
-                "similarity": similarity,
+                "similarity": score,
                 "formula": test_formula,
                 "target_fp": test_fp.tolist(),
                 "pred_fp": pred_fp.tolist(),
-                "jaccard": jaccard_score(pred_fp, test_fp),
+                "jaccard": score,
                 "inchikey": inchikey_info.get(spec_id),
                 "smiles": smiles_info.get(spec_id),
                 "top_train_inchikey": inchikey_info.get(top_train_id),
@@ -231,10 +242,6 @@ def main(args):
     for dataset in args.datasets:
         cached_info = None
         for split in args.splits:
-            emb_dir = Path(args.embeddings_folder) / dataset / split
-            if not (emb_dir / "train.pkl").exists() or not (emb_dir / "test.pkl").exists():
-                print(f"Skipping missing DreaMS embeddings: {emb_dir}")
-                continue
             split_file = Path(args.splits_folder) / dataset / f"{split}.json"
             use_mgf = args.input_source == "mgf" or (
                 args.input_source == "auto" and not (Path(args.data_folder) / f"{dataset}.pkl").exists()
@@ -257,26 +264,28 @@ def main(args):
                 split_ids = load_split_file(split_file)
                 train_ids = split_ids["train"]
                 test_ids = split_ids["test"]
-                split_file_label = str(split_file)
                 candidate_policy = args.candidate_policy
+                split_file_label = str(split_file)
 
-            if dataset == "nist2023" and not use_mgf:
+            if not train_ids or not test_ids:
+                print(f"Skipping {dataset}/{split}: empty train or test split")
+                continue
+
+            if use_mgf:
+                pass
+            elif dataset == "nist2023":
                 ids_needed = sorted(set(train_ids + test_ids))
                 info = load_dataset_info(dataset, args.data_folder, ids_needed)
-            elif not use_mgf:
+            else:
                 if cached_info is None:
                     cached_info = load_dataset_info(dataset, args.data_folder)
                 info = cached_info
 
-            train_emb = np.asarray(load_pickle(emb_dir / "train.pkl"), dtype=np.float32)
-            test_emb = np.asarray(load_pickle(emb_dir / "test.pkl"), dtype=np.float32)
-            records = compute_nn_records(
+            records = compute_fp_oracle_records(
                 dataset=dataset,
                 split=split,
                 train_ids=train_ids,
                 test_ids=test_ids,
-                train_emb=train_emb,
-                test_emb=test_emb,
                 fp_info=info[0],
                 formula_info=info[1],
                 inchikey_info=info[2],
@@ -298,10 +307,9 @@ def main(args):
                 {
                     "dataset": dataset,
                     "split": split,
-                    "method": "dreams_embedding_nn",
+                    "method": "fingerprint_oracle_upper_bound",
                     "candidate_policy": candidate_policy,
                     "split_file": split_file_label,
-                    "embeddings_folder": str(emb_dir),
                     "input_source": "mgf" if use_mgf else "processed_pickle",
                     "n_test_original": original_test_count,
                     "n_records_written": n_records_written,
@@ -314,9 +322,10 @@ def main(args):
                     "mean_jaccard_zero_skipped": mean_jaccard_zero_skipped,
                 }
             )
+
             stem = f"{dataset}_{split}"
-            write_pickle(records, output_dir / f"{stem}_dreaMS.pkl")
-            write_json(metrics, output_dir / f"{stem}_dreaMS_metrics.json")
+            write_pickle(records, output_dir / f"{stem}_fp_oracle.pkl")
+            write_json(metrics, output_dir / f"{stem}_fp_oracle_metrics.json")
             all_metrics[stem] = metrics
 
     write_json(all_metrics, output_dir / "summary.json")
@@ -335,9 +344,9 @@ if __name__ == "__main__":
         default=REPO_ROOT / "data" / "splits",
     )
     parser.add_argument(
-        "--embeddings-folder",
+        "--output-dir",
         type=Path,
-        default=REPO_ROOT / "results" / "nearest_neighbour" / "DreaMS_emb",
+        default=REPO_ROOT / "results" / "nearest_neighbour" / "fp_oracle_upper_bound",
     )
     parser.add_argument(
         "--mgf-folder",
@@ -351,11 +360,6 @@ if __name__ == "__main__":
     )
     parser.add_argument("--metadata-file", type=Path, default=None)
     parser.add_argument("--batch-size", type=int, default=256)
-    parser.add_argument(
-        "--output-dir",
-        type=Path,
-        default=REPO_ROOT / "results" / "nearest_neighbour" / "nn_sim_dreaMS",
-    )
     parser.add_argument("--datasets", nargs="+", default=["NPLIB1", "massspecgym"])
     parser.add_argument("--splits", nargs="+", default=["scaffold", "random"])
     parser.add_argument(

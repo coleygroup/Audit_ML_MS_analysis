@@ -28,7 +28,9 @@ The nearest neighbour baseline consists of three main steps.
 
 ## 1. Cache DreaMS Embeddings
 
-Compute spectral embeddings using the pretrained **DreaMS** model.
+Compute spectral embeddings using the pretrained **DreaMS** model. The default
+SSL weights are `ssl_model.ckpt` from [Zenodo record
+10997887](https://zenodo.org/records/10997887).
 
 ```bash
 python 01a_cache_dreaMS_emb.py
@@ -69,4 +71,4 @@ This script computes nearest neighbours using traditional spectral similarity (e
 ### Data 
 The datasets used in these experiments are available here:
 
-https://drive.google.com/drive/folders/1v11lTwFSdlSRJ6ETLHqkbT809Ji9w0OY?usp=drive_link 
+https://drive.google.com/drive/folders/1v11lTwFSdlSRJ6ETLHqkbT809Ji9w0OY?usp=drive_link

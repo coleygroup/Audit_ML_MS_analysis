@@ -13,3 +13,15 @@
 **/diagnosis/cache
 **/MS_prediction/*
 **/ablations/*
+
+# Local environments and downloaded data
+.venv*/
+__pycache__/
+*.py[cod]
+/data/
+FP_prediction/data/
+*.mgf
+*.hdf5
+*.ckpt
+*.pt
+*.pth

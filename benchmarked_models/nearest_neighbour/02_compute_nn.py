@@ -1,184 +1,388 @@
-import os 
+import argparse
 import math
+import os
+import sys
+from pathlib import Path
+
 import numpy as np
 from tqdm import tqdm
-from pathlib import Path
-from sklearn.metrics.pairwise import cosine_similarity
 
-from utils import load_pickle, load_json, pickle_data
+REPO_ROOT = Path(__file__).resolve().parents[2]
+sys.path.insert(0, str(REPO_ROOT))
+
+from benchmarked_models.common.benchmark_utils import (  # noqa: E402
+    SKIP_MISSING_FORMULA_POLICIES,
+    VALID_CANDIDATE_POLICIES,
+    cosine_top1,
+    fingerprint_to_bits,
+    jaccard_score,
+    load_pickle,
+    load_split_file,
+    summarize_records,
+    write_json,
+    write_pickle,
+)
+from benchmarked_models.common.mgf_utils import load_metadata_sidecar, load_mgf_records  # noqa: E402
+
 
 def bin_MS(spec, bin_resolution=0.25, max_da=2000.0):
-
     peaks = spec["peaks"]
     precursor_mz = spec["precursor_MZ_final"]
-
     peaks = peaks + [{"mz": precursor_mz, "intensity_norm": 100}]
 
     n_bins = int(math.ceil(max_da / bin_resolution))
     out = [0.0] * n_bins
-
     inv = 1.0 / bin_resolution
-    floor = math.floor
-    for p in peaks:
-        b = floor(p["mz"] * inv)
-        if 0 <= b < n_bins:
-            out[b] += p["intensity_norm"]
-            
-    return out
+    for peak in peaks:
+        bin_idx = math.floor(peak["mz"] * inv)
+        if 0 <= bin_idx < n_bins:
+            out[bin_idx] += peak["intensity_norm"]
+    return np.asarray(out, dtype=np.float32)
 
-def string_to_bits(string): 
-
-    bits = np.array([int(c) for c in string])
-
-    return bits
 
 def get_info(data):
+    ms_info, fp_info, formula_info, inchikey_info, smiles_info = {}, {}, {}, {}, {}
+    for row in tqdm(data, desc="index records"):
+        spec_id = str(row["id_"])
+        ms_info[spec_id] = bin_MS(row)
+        fp_info[spec_id] = fingerprint_to_bits(row["FPs"]["morgan4_4096"])
+        formula_info[spec_id] = row.get("formula")
+        inchikey_info[spec_id] = row.get("inchikey")
+        smiles_info[spec_id] = row.get("smiles")
+    return ms_info, fp_info, formula_info, inchikey_info, smiles_info
 
-    MS_info, FP_info, formula_info = {}, {}, {}
 
-    for r in tqdm(data):
-        
-        MS_info[str(r["id_"])] = bin_MS(r)
-        FP_info[str(r["id_"])] = string_to_bits(r["FPs"]["morgan4_4096"])
-        formula_info[str(r["id_"])] = r["formula"]
+def get_info_nist2023(folder, ids):
+    ms_info, fp_info, formula_info, inchikey_info, smiles_info = {}, {}, {}, {}, {}
+    for spec_id in tqdm(ids, desc="index nist2023 records"):
+        row = load_pickle(folder / f"{spec_id}.pkl")
+        ms_info[spec_id] = bin_MS(row)
+        fp_info[spec_id] = fingerprint_to_bits(row["FPs"]["morgan4_4096"])
+        formula_info[spec_id] = row.get("formula")
+        inchikey_info[spec_id] = row.get("inchikey")
+        smiles_info[spec_id] = row.get("smiles")
+    return ms_info, fp_info, formula_info, inchikey_info, smiles_info
 
-    return MS_info, FP_info, formula_info
 
-def get_info_nist2023(folder, train_ids):
-    
-    MS_info, FP_info, formula_info = [], [], {}
+def candidate_indices(policy, train_formula, test_formula):
+    if policy == "all_train_candidates":
+        return np.arange(len(train_formula), dtype=int)
+    return np.asarray(
+        [idx for idx, formula in enumerate(train_formula) if formula == test_formula],
+        dtype=int,
+    )
 
-    for idx, id_ in tqdm(enumerate(train_ids)):
-                
-        train_info = load_pickle(folder / f"{id_}.pkl")
-        MS_info.append(bin_MS(train_info))
-        FP_info.append(string_to_bits(train_info["FPs"]["morgan4_4096"]))
 
-        train_formula = train_info["formula"]
-        if train_formula not in formula_info: formula_info[train_formula] = []
-        formula_info[train_formula].append(idx)
-    
-    return np.array(MS_info), np.array(FP_info), formula_info
+def formula_candidate_index(train_formula):
+    index = {}
+    for idx, formula in enumerate(train_formula):
+        index.setdefault(formula, []).append(idx)
+    return {
+        formula: np.asarray(indices, dtype=int)
+        for formula, indices in index.items()
+    }
+
+
+def compute_nn_records(
+    dataset,
+    split,
+    train_ids,
+    test_ids,
+    ms_info,
+    fp_info,
+    formula_info,
+    inchikey_info,
+    smiles_info,
+    candidate_policy,
+    batch_size=64,
+):
+    train_ms = np.asarray([ms_info[spec_id] for spec_id in train_ids], dtype=np.float32)
+    train_fp = [fp_info[spec_id] for spec_id in train_ids]
+    train_formula = np.asarray([formula_info.get(spec_id) for spec_id in train_ids])
+    formula_to_candidates = (
+        None
+        if candidate_policy == "all_train_candidates"
+        else formula_candidate_index(train_formula)
+    )
+
+    records = []
+    if candidate_policy == "all_train_candidates":
+        train_norm = np.linalg.norm(train_ms, axis=1)
+        train_normed = np.divide(
+            train_ms,
+            train_norm[:, None],
+            out=np.zeros_like(train_ms, dtype=np.float32),
+            where=train_norm[:, None] > 0,
+        )
+        test_ms = np.asarray([ms_info[spec_id] for spec_id in test_ids], dtype=np.float32)
+        for start in tqdm(range(0, len(test_ids), batch_size), desc=f"{dataset}/{split}"):
+            end = min(start + batch_size, len(test_ids))
+            batch = test_ms[start:end]
+            batch_norm = np.linalg.norm(batch, axis=1)
+            batch_normed = np.divide(
+                batch,
+                batch_norm[:, None],
+                out=np.zeros_like(batch, dtype=np.float32),
+                where=batch_norm[:, None] > 0,
+            )
+            sims = batch_normed @ train_normed.T
+            top_indices = np.argmax(sims, axis=1)
+            for offset, train_idx in enumerate(top_indices):
+                spec_id = test_ids[start + offset]
+                top_train_id = train_ids[int(train_idx)]
+                pred_fp = train_fp[int(train_idx)]
+                test_fp = fp_info[spec_id]
+                records.append(
+                    {
+                        "dataset": dataset,
+                        "split": split,
+                        "method": "binned_spectrum_nn",
+                        "candidate_policy": candidate_policy,
+                        "spec_id": spec_id,
+                        "top_train_id": top_train_id,
+                        "has_candidate": True,
+                        "similarity": float(sims[offset, train_idx]),
+                        "formula": formula_info.get(spec_id),
+                        "target_fp": test_fp.tolist(),
+                        "pred_fp": pred_fp.tolist(),
+                        "jaccard": jaccard_score(pred_fp, test_fp),
+                        "inchikey": inchikey_info.get(spec_id),
+                        "smiles": smiles_info.get(spec_id),
+                        "top_train_inchikey": inchikey_info.get(top_train_id),
+                        "top_train_smiles": smiles_info.get(top_train_id),
+                    }
+                )
+        return records
+
+    for spec_id in tqdm(test_ids, desc=f"{dataset}/{split}"):
+        test_formula = formula_info.get(spec_id)
+        test_fp = fp_info.get(spec_id)
+        cand_idx = formula_to_candidates.get(test_formula, np.asarray([], dtype=int))
+        if len(cand_idx) == 0:
+            if candidate_policy in SKIP_MISSING_FORMULA_POLICIES:
+                continue
+            records.append(
+                {
+                    "dataset": dataset,
+                    "split": split,
+                    "method": "binned_spectrum_nn",
+                    "candidate_policy": candidate_policy,
+                    "spec_id": spec_id,
+                    "top_train_id": None,
+                    "has_candidate": False,
+                    "similarity": None,
+                    "formula": test_formula,
+                    "target_fp": test_fp.tolist() if test_fp is not None else None,
+                    "pred_fp": None,
+                    "jaccard": None,
+                    "inchikey": inchikey_info.get(spec_id),
+                    "smiles": smiles_info.get(spec_id),
+                }
+            )
+            continue
+
+        local_idx, similarity = cosine_top1(ms_info[spec_id], train_ms[cand_idx])
+        train_idx = int(cand_idx[local_idx])
+        top_train_id = train_ids[train_idx]
+        pred_fp = train_fp[train_idx]
+        records.append(
+            {
+                "dataset": dataset,
+                "split": split,
+                "method": "binned_spectrum_nn",
+                "candidate_policy": candidate_policy,
+                "spec_id": spec_id,
+                "top_train_id": top_train_id,
+                "has_candidate": True,
+                "similarity": similarity,
+                "formula": test_formula,
+                "target_fp": test_fp.tolist(),
+                "pred_fp": pred_fp.tolist(),
+                "jaccard": jaccard_score(pred_fp, test_fp),
+                "inchikey": inchikey_info.get(spec_id),
+                "smiles": smiles_info.get(spec_id),
+                "top_train_inchikey": inchikey_info.get(top_train_id),
+                "top_train_smiles": smiles_info.get(top_train_id),
+            }
+        )
+    return records
+
+
+def load_dataset_info(dataset, data_folder, ids_needed=None):
+    if dataset == "nist2023":
+        if ids_needed is None:
+            raise ValueError("NIST2023 pickle loading requires split ids")
+        return get_info_nist2023(Path(data_folder) / "nist2023", ids_needed)
+    data = load_pickle(Path(data_folder) / f"{dataset}.pkl")
+    return get_info(data)
+
+
+def load_split_mgf_info(args, dataset, split):
+    split_dir = Path(args.mgf_folder) / dataset / split
+    metadata = load_metadata_sidecar(args.metadata_file)
+    train = load_mgf_records(
+        split_dir / "train.mgf",
+        bin_resolution=args.bin_resolution,
+        max_da=args.max_da,
+        metadata_by_id=metadata,
+    )
+    test = load_mgf_records(
+        split_dir / "test.mgf",
+        bin_resolution=args.bin_resolution,
+        max_da=args.max_da,
+        metadata_by_id=metadata,
+    )
+    train_ids = list(train[0].keys())
+    test_ids = list(test[0].keys())
+    info = []
+    for train_part, test_part in zip(train, test):
+        merged = dict(train_part)
+        merged.update(test_part)
+        info.append(merged)
+    missing_fp = [spec_id for spec_id in train_ids + test_ids if spec_id not in info[1]]
+    if missing_fp:
+        raise ValueError(
+            f"{dataset}/{split} MGF records missing FP values for {len(missing_fp)} spectra"
+        )
+    return train_ids, test_ids, tuple(info)
+
+
+def main(args):
+    if args.candidate_policy not in VALID_CANDIDATE_POLICIES:
+        raise ValueError(f"Unknown candidate policy: {args.candidate_policy}")
+
+    output_dir = Path(args.output_dir) / args.candidate_policy
+    output_dir.mkdir(parents=True, exist_ok=True)
+    all_metrics = {}
+
+    for dataset in args.datasets:
+        cached_info = None
+        for split in args.splits:
+            split_file = Path(args.splits_folder) / dataset / f"{split}.json"
+            use_mgf = args.input_source == "mgf" or (
+                args.input_source == "auto" and not (Path(args.data_folder) / f"{dataset}.pkl").exists()
+            )
+            if use_mgf:
+                train_ids, test_ids, info = load_split_mgf_info(args, dataset, split)
+                split_file_label = str(Path(args.mgf_folder) / dataset / split)
+                if args.candidate_policy != "all_train_candidates" and not any(info[2].values()):
+                    print(
+                        f"{dataset}/{split}: formula metadata absent in MGF; "
+                        "falling back to all_train_candidates"
+                    )
+                    candidate_policy = "all_train_candidates"
+                else:
+                    candidate_policy = args.candidate_policy
+            else:
+                if not split_file.exists():
+                    print(f"Skipping missing split file: {split_file}")
+                    continue
+                split_ids = load_split_file(split_file)
+                train_ids = split_ids["train"]
+                test_ids = split_ids["test"]
+                candidate_policy = args.candidate_policy
+                split_file_label = str(split_file)
+            if not train_ids or not test_ids:
+                print(f"Skipping {dataset}/{split}: empty train or test split")
+                continue
+
+            if use_mgf:
+                pass
+            elif dataset == "nist2023":
+                ids_needed = sorted(set(train_ids + test_ids))
+                info = load_dataset_info(dataset, args.data_folder, ids_needed)
+            else:
+                if cached_info is None:
+                    cached_info = load_dataset_info(dataset, args.data_folder)
+                info = cached_info
+
+            records = compute_nn_records(
+                dataset=dataset,
+                split=split,
+                train_ids=train_ids,
+                test_ids=test_ids,
+                ms_info=info[0],
+                fp_info=info[1],
+                formula_info=info[2],
+                inchikey_info=info[3],
+                smiles_info=info[4],
+                candidate_policy=candidate_policy,
+                batch_size=args.batch_size,
+            )
+            metrics = summarize_records(records)
+            original_test_count = len(test_ids)
+            n_records_written = len(records)
+            n_skipped = original_test_count - n_records_written
+            predicted_mean = metrics["mean_jaccard_predicted"]
+            mean_jaccard_zero_skipped = (
+                float(predicted_mean * metrics["n_evaluated"] / original_test_count)
+                if predicted_mean is not None and original_test_count
+                else 0.0
+            )
+            metrics.update(
+                {
+                    "dataset": dataset,
+                    "split": split,
+                    "method": "binned_spectrum_nn",
+                    "candidate_policy": candidate_policy,
+                    "split_file": split_file_label,
+                    "input_source": "mgf" if use_mgf else "processed_pickle",
+                    "n_test_original": original_test_count,
+                    "n_records_written": n_records_written,
+                    "n_skipped_no_formula_candidate": n_skipped,
+                    "coverage_of_original_test": (
+                        float(metrics["n_evaluated"] / original_test_count)
+                        if original_test_count
+                        else 0.0
+                    ),
+                    "mean_jaccard_zero_skipped": mean_jaccard_zero_skipped,
+                }
+            )
+
+            stem = f"{dataset}_{split}"
+            write_pickle(records, output_dir / f"{stem}.pkl")
+            write_json(metrics, output_dir / f"{stem}_metrics.json")
+            all_metrics[stem] = metrics
+
+    write_json(all_metrics, output_dir / "summary.json")
+
 
 if __name__ == "__main__":
-
-    data_folder = Path("../../data/processed_data")
-    splits_folder = Path("../../data/splits")
-    cache_folder = Path("../../results/nearest_neighbour/nn_sim")
-    if not os.path.exists(cache_folder): os.makedirs(cache_folder)
-
-    datasets = ["NPLIB1", "massspecgym"]
-    splits = ["scaffold", "random"]
-
-    # 1. Get the splits
-    all_splits = {} 
-
-    for dataset in datasets:
-
-        all_splits[dataset] = {} 
-
-        for split in splits: 
-
-            current_filepath = splits_folder / dataset / f"{split}.json"
-            assert os.path.exists(current_filepath)
-
-            split_ids = load_json(current_filepath)
-            train, test = split_ids["train"], split_ids["test"]
-            train = [t.replace(".pkl", "") for t in train]
-            test = [t.replace(".pkl", "") for t in test]
-
-            all_splits[dataset][split] = {"train": train,
-                                          "test": test}
-
-    # 2. Get the nearest neighbour now
-    for dataset in datasets:
-        
-        if dataset != "nist2023": 
-            
-            MS_info, FP_info, formula_info = None, None, None
-
-            for split in splits: 
-
-                output_path = cache_folder / f"{dataset}_{split}.pkl"
-                if os.path.exists(output_path): continue 
-
-                print(f"Processing {dataset}, {split} split now.")
-                if MS_info is None: 
-                    data = load_pickle(data_folder / f"{dataset}.pkl")
-                    MS_info, FP_info, formula_info = get_info(data)
-                    print("Done loading data")
-                    del data # To free up some memory
-
-                train_ids, test_ids = all_splits[dataset][split]["train"], all_splits[dataset][split]["test"]
-
-                train_MS = np.array([MS_info[id_] for id_ in train_ids])
-                train_FP = np.array([FP_info[id_] for id_ in train_ids])
-                train_formula = np.array([formula_info[id_] for id_ in train_ids])
-
-                computed_test_ids, top_train_ids = [],[]
-                computed_test_FP, pred_FP = [],[]
-
-                for id_ in tqdm(test_ids): 
-
-                    test_formula = formula_info[id_]
-                    test_FP = FP_info[id_]
-
-                    # Let us sieve out the train 
-                    sieved_idx = [idx for idx, f in enumerate(train_formula) if f == test_formula]
-                    if len(sieved_idx) == 0: continue
-
-                    # Get the prediction now
-                    sim = cosine_similarity([MS_info[id_]], train_MS[sieved_idx])
-                    train_idx = np.argmax(sim, axis = 1)[0]
-
-                    computed_test_ids.append(id_)
-                    top_train_ids.append(train_ids[sieved_idx[train_idx]])
-
-                    computed_test_FP.append(test_FP)
-                    pred_FP.append(train_FP[sieved_idx[train_idx]])
-
-                    # Delete the similarity matrix to save space 
-                    del sim 
-                
-                pickle_data((computed_test_ids, top_train_ids, computed_test_FP, pred_FP), output_path)
-        
-        else:
-            
-            for split in splits: 
-                output_path = cache_folder / f"{dataset}_{split}.pkl"
-                if os.path.exists(output_path): continue
-
-                print(f"Processing {dataset}, {split} split now.")
-                frags_folder = data_folder / "nist2023"
-
-                train_ids, test_ids = all_splits[dataset][split]["train"], all_splits[dataset][split]["test"]
-                train_MS, train_FP, formula_info = get_info_nist2023(frags_folder, train_ids)
-
-                computed_test_ids, top_train_ids = [],[]
-                computed_test_FP, pred_FP = [],[]
-
-                for te_id in tqdm(test_ids):
-
-                    test_info = load_pickle(frags_folder / f"{te_id}.pkl")
-                    test_MS = bin_MS(test_info)
-                    test_formula = test_info["formula"]
-                    test_FP = string_to_bits(test_info["FPs"]["morgan4_4096"])
-
-                    if test_formula not in formula_info: continue 
-
-                    sieved_idx = formula_info[test_formula]
-                    sim = cosine_similarity([test_MS], train_MS[sieved_idx])
-                    train_idx = np.argmax(sim, axis = 1)[0]
-
-                    # Add to the list 
-                    top_train = train_ids[sieved_idx[train_idx]]
-
-                    computed_test_ids.append(te_id)
-                    top_train_ids.append(top_train)
-                    computed_test_FP.append(test_FP)
-                    pred_FP.append(train_FP[sieved_idx[train_idx]])
-
-                    # Delete the similarity matrix to save space 
-                    del sim 
-
-            pickle_data((computed_test_ids, top_train_ids, computed_test_FP, pred_FP), output_path)
+    parser = argparse.ArgumentParser()
+    parser.add_argument(
+        "--data-folder",
+        type=Path,
+        default=REPO_ROOT / "data" / "processed_data",
+    )
+    parser.add_argument(
+        "--splits-folder",
+        type=Path,
+        default=REPO_ROOT / "data" / "splits",
+    )
+    parser.add_argument(
+        "--output-dir",
+        type=Path,
+        default=REPO_ROOT / "results" / "nearest_neighbour" / "nn_sim",
+    )
+    parser.add_argument(
+        "--mgf-folder",
+        type=Path,
+        default=REPO_ROOT / "data" / "MGF_files",
+    )
+    parser.add_argument(
+        "--input-source",
+        choices=["auto", "processed_pickle", "mgf"],
+        default="auto",
+    )
+    parser.add_argument("--metadata-file", type=Path, default=None)
+    parser.add_argument("--bin-resolution", type=float, default=0.25)
+    parser.add_argument("--max-da", type=float, default=2000.0)
+    parser.add_argument("--batch-size", type=int, default=64)
+    parser.add_argument("--datasets", nargs="+", default=["NPLIB1", "massspecgym"])
+    parser.add_argument("--splits", nargs="+", default=["scaffold", "random"])
+    parser.add_argument(
+        "--candidate-policy",
+        choices=sorted(VALID_CANDIDATE_POLICIES),
+        default="all_train_candidates",
+    )
+    main(parser.parse_args())

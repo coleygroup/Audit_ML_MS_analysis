@@ -88,7 +88,7 @@ exact 2D InChIKey also appears in the training split.
 
 Under this favorable subset evaluation, nearest-neighbour methods outperform
 tuned MIST only on the random splits. Those random subsets also have very high
-exact-molecule overlap with training data: 76.4% for NPLIB1 and 96.7% for
+exact-molecule overlap with training data: 78.0% for NPLIB1 and 96.7% for
 MassSpecGym. On scaffold splits, where the exact-overlap rate is much lower,
 tuned MIST outperforms both nearest-neighbour baselines and is close to the
 same-formula nearest-neighbour upper bound. This supports the interpretation
@@ -98,10 +98,10 @@ search generalizes better than MIST.
 
 | Dataset | Model                      |                Scaffold Jaccard (↑) |                   Random Jaccard (↑) |
 | ----------- | -------------------------- | ----------------------------------: | -----------------------------------: |
-| NPLIB1 | Tuned MIST                 |  **0.311** (n=1,024; **leak=3.8%**) |          0.803 (n=2,191; leak=76.4%) |
-| NPLIB1 | Formula NN                 |          0.282 (n=1,024; leak=3.8%) |  **0.828** (n=2,191; **leak=76.4%**) |
-| NPLIB1 | Formula DreaMS NN          |          0.292 (n=1,024; leak=3.8%) |  **0.829** (n=2,191; **leak=76.4%**) |
-| NPLIB1 | FP oracle (NN upper bound) |        _0.325_ (n=1,024; leak=3.8%) |        _0.868_ (n=2,191; leak=76.4%) |
+| NPLIB1 | Tuned MIST                 |  **0.320** (n=1,028; **leak=4.2%**) |          0.801 (n=2,214; leak=78.0%) |
+| NPLIB1 | Formula NN                 |          0.283 (n=1,028; leak=4.2%) |          0.829 (n=2,214; leak=78.0%) |
+| NPLIB1 | Formula DreaMS NN          |          0.293 (n=1,028; leak=4.2%) |  **0.830** (n=2,214; **leak=78.0%**) |
+| NPLIB1 | FP oracle (NN upper bound) |        _0.326_ (n=1,028; leak=4.2%) |        _0.869_ (n=2,214; leak=78.0%) |
 | MassSpecGym | Tuned MIST                 | **0.503** (n=6,571; **leak=33.0%**) |         0.941 (n=15,777; leak=96.7%) |
 | MassSpecGym | Formula NN                 |         0.455 (n=6,571; leak=33.0%) | **0.953** (n=15,777; **leak=96.7%**) |
 | MassSpecGym | Formula DreaMS NN          |         0.470 (n=6,571; leak=33.0%) | **0.966** (n=15,777; **leak=96.7%**) |

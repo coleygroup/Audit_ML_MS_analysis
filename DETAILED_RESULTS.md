@@ -34,11 +34,13 @@ model's training objectives.
 
 | Dataset | Model | Scaffold FP cosine (↑) | Random FP cosine (↑) |
 | ----------- | ------------------ | ---------------------: | -------------------: |
-| NPLIB1 | Tuned MIST | **0.500** (n=2,684) | **0.837** (n=2,721) |
+| NPLIB1 | Tuned MIST | **0.505** (n=2,689) | **0.838** (n=2,744) |
 | NPLIB1 | Nearest neighbour | 0.296 (n=2,689) | 0.671 (n=2,744) |
+| NPLIB1 | Formula-first NN | 0.321 (n=2,689) | 0.770 (n=2,744) |
 | NPLIB1 | DreaMS | 0.379 (n=2,689) | 0.753 (n=2,744) |
 | MassSpecGym | Tuned MIST | **0.514** (n=16,042) | **0.958** (n=16,250) |
 | MassSpecGym | Nearest neighbour | 0.314 (n=16,042) | 0.869 (n=16,250) |
+| MassSpecGym | Formula-first NN | 0.344 (n=16,042) | 0.940 (n=16,250) |
 | MassSpecGym | DreaMS | 0.398 (n=16,042) | 0.912 (n=16,250) |
 
 Retrieval is evaluated by 2D InChIKey hit rate after ranking candidates with the
@@ -52,7 +54,7 @@ evaluations.
 
 | Dataset | Candidate set | Model | Scaffold top-1 / top-5 / top-10 (↑) | Random top-1 / top-5 / top-10 (↑) |
 | ----------- | ------------------ | ------------------ | ----------------------------------: | --------------------------------: |
-| NPLIB1 | PubChem same formula | Tuned MIST | **0.116 / 0.245 / 0.333** (n=2,684) | **0.638 / 0.752 / 0.796** (n=2,721) |
+| NPLIB1 | PubChem same formula | Tuned MIST | **0.126 / 0.255 / 0.336** (n=2,689) | **0.636 / 0.755 / 0.798** (n=2,744) |
 | NPLIB1 | PubChem same formula | Nearest neighbour | 0.055 / 0.142 / 0.195 (n=2,689) | 0.380 / 0.533 / 0.585 (n=2,744) |
 | NPLIB1 | PubChem same formula | DreaMS | 0.100 / 0.230 / 0.296 (n=2,689) | 0.428 / 0.611 / 0.667 (n=2,744) |
 | MassSpecGym | Official formula | Tuned MIST | **0.225 / 0.359 / 0.429** (n=16,042) | **0.891 / 0.948 / 0.960** (n=16,250) |
@@ -77,6 +79,21 @@ as failures.
 | NPLIB1 | scaffold | 38.2% | 0.293 | 0.112 |
 | MassSpecGym | random | 97.1% | 0.953 | 0.925 |
 | MassSpecGym | scaffold | 41.0% | 0.455 | 0.186 |
+
+We also evaluated a best-effort formula-first variant: use the same-formula
+nearest neighbour when a formula-matched training spectrum exists, otherwise
+fall back to the all-training-set nearest neighbour. This gives the
+formula-filtered baseline the advantage of formula matching without changing
+the denominator. It improves over the all-training-set NN baseline, especially
+on random splits, but tuned MIST remains higher on all four full-test Jaccard
+comparisons.
+
+| Dataset | Split | Tuned MIST Jaccard (↑) | NN, all train (↑) | Formula-first NN (↑) | Formula-only NN subset (↑) |
+|---|---|---:|---:|---:|---:|
+| NPLIB1 | scaffold | **0.275** (n=2,689) | 0.195 (n=2,689) | 0.212 (n=2,689; fallback=1,661) | 0.282 (n=1,028) |
+| NPLIB1 | random | **0.721** (n=2,744) | 0.611 (n=2,744) | 0.720 (n=2,744; fallback=530) | 0.822 (n=2,214) |
+| MassSpecGym | scaffold | **0.365** (n=16,042) | 0.230 (n=16,042) | 0.256 (n=16,042; fallback=9,471) | 0.455 (n=6,571) |
+| MassSpecGym | random | **0.930** (n=16,250) | 0.850 (n=16,250) | 0.929 (n=16,250; fallback=473) | 0.953 (n=15,777) |
 
 The next table asks a narrower diagnostic question: on the favorable
 subset that the formula-filtered nearest-neighbour code can score, how much of
@@ -146,8 +163,8 @@ does not close the gap to tuned MIST.
 
 | Dataset     | Split    | Tuned MIST FP Cosine (↑) |  NN k=1 FP Cosine (↑) | k=3 vote FP Cosine (↑) | k=3 average FP Cosine (↑) | k=5 vote FP Cosine (↑) | k=5 average FP Cosine (↑) |
 |-------------|----------|-------------------------:|----------------------:|-----------------------:|--------------------------:|-----------------------:|--------------------------:|
-| NPLIB1      | scaffold |                **0.500** |                 0.296 |                  0.315 |                     0.344 |                  0.322 |                     0.361 |
-| NPLIB1      | random   |                **0.837** |                 0.671 |                  0.602 |                     0.654 |                  0.562 |                     0.633 |
+| NPLIB1      | scaffold |                **0.505** |                 0.296 |                  0.315 |                     0.344 |                  0.322 |                     0.361 |
+| NPLIB1      | random   |                **0.838** |                 0.671 |                  0.602 |                     0.654 |                  0.562 |                     0.633 |
 | MassSpecGym | scaffold |                **0.514** |                 0.314 |                  0.325 |                     0.349 |                  0.331 |                     0.363 |
 | MassSpecGym | random   |                **0.958** |                 0.869 |                  0.780 |                     0.830 |                  0.733 |                     0.800 |
 

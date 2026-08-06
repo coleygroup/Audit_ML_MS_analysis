@@ -9,46 +9,53 @@ MassSpecGym, each under random and scaffold splits.
 
 ## 1. Environment
 
-Use Python 3.10 or 3.11.
-
-```bash
-mamba create -y -n ml-ms-analysis python=3.10
-mamba activate ml-ms-analysis
-pip install numpy pandas scipy scikit-learn tqdm h5py pyyaml torch pytorch-lightning rdkit
-```
-
 MIST training depends on **MIST vFRIGID**, meaning the MIST version used inside
-the FRIGID model, not the original MIST repository/package. Install the FRIGID
-checkout that contains this MIST implementation before running the MIST
-commands:
+the FRIGID model, not the original MIST repository/package. It lives on the
+**`MIST-FRIGID` branch** of the FRIGID repository, **not** on `main`.
+
+On the `MIST-FRIGID` branch the package lives at `src/mist` and is installed by
+the checkout's own `pyproject.toml`. That branch has its own lightweight
+`requirements.txt`; the `ms-pred` submodule and the heavier FRIGID
+dependency set used for diffusion-based generation are **not** needed for the
+MIST encoder runs reported here.
 
 ```bash
+mamba create -y -n ml-ms-analysis python=3.9
+mamba activate ml-ms-analysis
+
 mkdir -p external
-git clone --recurse-submodules https://github.com/coleygroup/FRIGID.git external/FRIGID
-cd external/FRIGID
-git submodule update --init --recursive
-pip install -r ms-pred/requirements.txt
-pip install -e ./ms-pred
+git clone --branch MIST-FRIGID --depth 1 \
+  https://github.com/coleygroup/FRIGID.git external/FRIGID-MIST
+
+cd external/FRIGID-MIST
+pip install torch==2.7.0 torchvision==0.22.0 torchaudio==2.7.0 \
+  --index-url https://download.pytorch.org/whl/cu118
+pip install -r requirements.txt
 pip install -e .
 cd ../..
+
+pip install numpy pandas scipy scikit-learn tqdm h5py pyyaml rdkit
 ```
 
-Verify that Python resolves `import mist` to the MIST vFRIGID implementation:
+Verify that Python resolves `mist.data` to the MIST vFRIGID implementation.
+Note that `mist` on this branch is an implicit namespace package (it has no
+`__init__.py`), so `inspect.getfile(mist)` raises `TypeError`; check a
+submodule instead:
 
 ```bash
 python - <<'PY'
-import inspect
-import mist
+import mist.data.datasets as d
+from mist.data.datasets import SpectraMolDataset, SpecDataModule
 
-print(inspect.getfile(mist))
+print(d.__file__)
 PY
 ```
 
-If the printed path does not point inside `external/FRIGID`, put the FRIGID
-source tree containing MIST vFRIGID first on `PYTHONPATH`:
+The printed path must point inside `external/FRIGID-MIST`. If it does not, put
+that source tree first on `PYTHONPATH`:
 
 ```bash
-export PYTHONPATH="$PWD/external/FRIGID/src:$PWD/benchmarked_models/mist:$PYTHONPATH"
+export PYTHONPATH="$PWD/external/FRIGID-MIST/src:$PYTHONPATH"
 ```
 
 The DreaMS nearest-neighbour baseline also requires DreaMS and the pretrained
@@ -58,7 +65,7 @@ by `benchmarked_models/nearest_neighbour/01a_cache_dreaMS_emb.py`.
 
 ## 2. Data
 
-For MIST retraining, use [Serena Khoo's Google Drive artifacts](https://drive.google.com/drive/folders/1v11lTwFSdlSRJ6ETLHqkbT809Ji9w0OY?usp=drive_link)
+For MIST retraining, use [original authors's Google Drive artifacts](https://drive.google.com/drive/folders/1v11lTwFSdlSRJ6ETLHqkbT809Ji9w0OY?usp=drive_link)
 prepared for this reproduction. They contain the required `labels.tsv`, spectra, subformulae,
 MAGMa outputs, and split TSVs for both NPLIB1 and MassSpecGym, so the two
 upstream Zenodo MIST data exports are not required for the tuned runs reported
@@ -148,7 +155,7 @@ data/pubchem/pubchem_formulae_inchikey.hdf5
 
 ### MassSpecGym candidate retrieval data
 
-The MassSpecGym formula and mass candidate sets used in Section 7 come from the
+The MassSpecGym formula and mass candidate sets used in Section 8 come from the
 official MassSpecGym Hugging Face dataset under
 [`data/molecules`](https://huggingface.co/datasets/roman-bushuiev/MassSpecGym/tree/main/data/molecules),
 which provides the retrieval candidate resources
@@ -177,10 +184,39 @@ data/massspecgym/cands_df_test_formula_256.tsv
 data/massspecgym/cands_df_test_mass_256.tsv
 ```
 
-## 3. Train and Evaluate MIST
+## 3. NPLIB1 Test-Set Recovery
+
+**Mandatory before training NPLIB1.** The MGF export contains 23 random and 5
+scaffold test spectra (27 unique) that the MIST export omits. Skip this and MIST
+is scored on 2,721 / 2,684 test spectra against the baselines' 2,744 / 2,689,
+with no error raised.
+
+```bash
+python scripts/recover_nplib1_missing_test_spectra.py \
+  --mist-data-root /path/to/scratch/mist_repro/raw/google_drive_mist_outputs/NPLIB1 \
+  --mgf-root data/MGF_files/NPLIB1 \
+  --metadata data/metadata/NPLIB1_metadata.tsv \
+  --output-root /path/to/scratch/mist_repro/nplib1_extended
+```
+
+Point the `dataset` paths of the NPLIB1 configs (`labels_file`, `spec_folder`,
+`subform_folder`, `split_file`) at the extended root. The recovered spectra are
+added as `test` entries only, so no leakage is introduced; if you have already
+trained, re-running `predict.py` against the extended root is enough — no
+retraining. Verify:
+
+```bash
+awk -F'\t' 'NR>1 && $2=="test"' /path/to/scratch/mist_repro/nplib1_extended/splits/random.tsv | wc -l   # expect 2744
+awk -F'\t' 'NR>1 && $2=="test"' /path/to/scratch/mist_repro/nplib1_extended/splits/scaffold.tsv | wc -l # expect 2689
+```
+
+MassSpecGym needs no equivalent step.
+
+## 4. Train and Evaluate MIST
 
 Run from `benchmarked_models/mist`. The first loop reproduces the tuned MIST
-configuration used as the default in this repository.
+configuration used as the default in this repository. NPLIB1 configs must point
+at the extended data root from Section 3.
 
 ```bash
 cd benchmarked_models/mist
@@ -234,6 +270,13 @@ do
 done
 ```
 
+`--checkpoint` accepts either a run directory or an explicit `.ckpt` path. Given
+a directory, `predict.py` prefers the checkpoint with the lowest monitored
+value parsed from names of the form `{epoch:03d}-{val_loss:.5f}.ckpt`, and
+falls back to `last.ckpt` when no such name exists. The tuned configs set
+`save_last_only: True` and therefore emit only `last.ckpt`; pass the `.ckpt`
+path directly if a run directory contains several unlabelled checkpoints.
+
 The expected per-run outputs are:
 
 ```text
@@ -243,7 +286,7 @@ benchmarked_models/mist/results/mist/<run>/test_results.pkl
 benchmarked_models/mist/results/mist/<run>/test_performance.json
 ```
 
-## 4. Corrected Nearest-Neighbour Baselines
+## 5. Corrected Nearest-Neighbour Baselines
 
 Run binned-spectrum nearest neighbour on the full training candidate set:
 
@@ -303,7 +346,7 @@ python benchmarked_models/nearest_neighbour/03_compute_fp_oracle_upper_bound.py 
   --candidate-policy all_train_candidates
 ```
 
-## 5. Formula-Filtered Diagnostic
+## 6. Formula-Filtered Diagnostic
 
 The diagnostic intentionally reproduces the problematic skip-missing formula
 setting. Run the same methods with `same_formula_candidates_skip_missing`.
@@ -311,7 +354,7 @@ The README-side table uses one common favorable subset per dataset/split. It
 starts from the same-formula evaluated IDs and, when tuned MIST predictions are
 available, intersects those IDs with the MIST `test_results.pkl` IDs before
 scoring every method. The MIST row in that table therefore requires both the
-MIST evaluation artifacts from Section 3 and the formula-filtered artifacts from
+MIST evaluation artifacts from Section 4 and the formula-filtered artifacts from
 this section.
 
 ```bash
@@ -358,7 +401,7 @@ python benchmarked_models/nearest_neighbour/03_compute_fp_oracle_upper_bound.py 
   --candidate-policy same_formula_candidates_skip_missing
 ```
 
-## 6. NPLIB1 PubChem Retrieval
+## 7. NPLIB1 PubChem Retrieval
 
 Extract same-formula PubChem candidates from the HDF5 map:
 
@@ -396,7 +439,7 @@ python scripts/compute_nplib1_pubchem_retrieval.py \
   --workers 8
 ```
 
-## 7. MassSpecGym Candidate Retrieval
+## 8. MassSpecGym Candidate Retrieval
 
 Score MassSpecGym formula and mass candidate retrieval for all three prediction
 methods:
@@ -411,7 +454,7 @@ python scripts/run_mist_msg_retrieval.py \
   --output-dir results/comparison/massspecgym_retrieval
 ```
 
-## 8. Build README-Side Tables
+## 9. Build README-Side Tables
 
 Build machine-readable tables from the generated artifacts:
 

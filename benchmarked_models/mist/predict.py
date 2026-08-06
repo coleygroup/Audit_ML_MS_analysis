@@ -7,7 +7,8 @@ import torch
 import torch.nn.functional as F 
 
 from utils import read_config, pickle_data, write_json
-from mist.data import datasets, splitter, featurizers
+from utils import split_utils
+from mist.data import datasets, featurizers
 from config_utils import update_mist_config
 
 from model.mist_model import MistNet
@@ -43,24 +44,52 @@ def get_checkpoint_path(folder):
         return folder
 
     checkpoints = [f for f in os.listdir(folder) if f.endswith(".ckpt")]
-    best_checkpoint, lowest_loss = "", 1e4
+    if not checkpoints:
+        raise FileNotFoundError(f"No .ckpt files found in {folder}")
+
+    best_checkpoint, lowest_loss = "", float("inf")
 
     for c in checkpoints:
-
-        loss = float(c.replace("-v1", "").replace(".ckpt", "").split("=")[-1]) # hack 
+        # Monitor-based checkpoints are named "{epoch:03d}-{val_loss:.5f}.ckpt".
+        # Names without a parseable trailing "=<float>" (notably "last.ckpt",
+        # which is all the tuned configs emit under save_last_only) are not
+        # rankable by loss and are handled by the fallback below.
+        stem = c.replace("-v1", "").replace(".ckpt", "")
+        try:
+            loss = float(stem.split("=")[-1])
+        except ValueError:
+            continue
         if loss < lowest_loss:
-            lowest_loss = loss 
-            best_checkpoint = c 
-    
+            lowest_loss = loss
+            best_checkpoint = c
+
+    if not best_checkpoint:
+        if "last.ckpt" in checkpoints:
+            best_checkpoint = "last.ckpt"
+        elif len(checkpoints) == 1:
+            best_checkpoint = checkpoints[0]
+        else:
+            raise ValueError(
+                f"Cannot choose a checkpoint in {folder}: none carry a parseable "
+                f"monitor value and there is no last.ckpt. Found: {sorted(checkpoints)}. "
+                f"Pass --checkpoint <path-to-.ckpt> explicitly."
+            )
+
     return os.path.join(folder, best_checkpoint)
 
 def get_datamodule(config):
 
-    # Split data
-    my_splitter = splitter.get_splitter(**config["dataset"])
+    # Split data (repo-side splitter: matches split names as strings)
+    my_splitter = split_utils.get_splitter(**config["dataset"])
 
-    # Update the config now 
-    config["dataset"]["spec_features"] = "peakformula_test"
+    # Update the config now.
+    # Test-time featurization is plain "peakformula" with the MAGMa auxiliary
+    # target disabled. Upstream MIST vFRIGID exposes no "peakformula_test" key;
+    # that name only existed in a local MIST fork, where it was a thin subclass
+    # forcing magma_aux_loss=False. Setting the flag here keeps the same
+    # behaviour without depending on a non-upstream featurizer registry entry.
+    config["dataset"]["spec_features"] = "peakformula"
+    config["dataset"]["magma_aux_loss"] = False
     config["dataset"]["allow_none_smiles"] = False
 
     # Get featurizers

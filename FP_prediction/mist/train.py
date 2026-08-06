@@ -13,8 +13,9 @@ from pytorch_lightning.loggers import WandbLogger
 from pytorch_lightning.utilities.rank_zero import rank_zero_only
 from pytorch_lightning.callbacks import ModelCheckpoint, EarlyStopping
 
-from mist.data import datasets, splitter, featurizers
+from mist.data import datasets, featurizers
 from utils import read_config, consolidate_sampling_probability_IF, load_pickle, pickle_data
+from utils import split_utils
 
 # Refine the mist model in our own directory 
 from model import mist_model
@@ -123,7 +124,7 @@ def sample_train(config):
 def get_datamodule(config):
 
     # Split data
-    my_splitter = splitter.get_splitter(**config["dataset"])
+    my_splitter = split_utils.get_splitter(**config["dataset"])
 
     # Check if we are going to sample the dataset 
     sampling_ratio = config["args"]["sampling_ratio"]

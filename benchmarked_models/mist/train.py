@@ -12,8 +12,9 @@ from pytorch_lightning import seed_everything
 from pytorch_lightning.utilities.rank_zero import rank_zero_only
 from pytorch_lightning.callbacks import ModelCheckpoint, EarlyStopping
 
-from mist.data import datasets, splitter, featurizers
+from mist.data import datasets, featurizers
 from utils import read_config, load_pickle, pickle_data
+from utils import split_utils
 from config_utils import get_mist_exp_name, update_mist_config
 
 # Refine the mist model in our own directory 
@@ -86,8 +87,8 @@ def update_config(args, config):
 
 def get_datamodule(config):
 
-    # Split data
-    my_splitter = splitter.get_splitter(**config["dataset"])
+    # Split data (repo-side splitter: matches split names as strings)
+    my_splitter = split_utils.get_splitter(**config["dataset"])
 
     # Get model class
     model_class = mist_model.MistNet

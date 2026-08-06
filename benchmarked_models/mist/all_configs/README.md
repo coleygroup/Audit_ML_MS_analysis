@@ -8,7 +8,9 @@ two checked-in families:
 
 The table below also includes two reference families that are not fully
 materialized as YAML files here: Official MISTv2, and **MIST vFRIGID**, meaning
-the MIST version used inside the FRIGID model. MIST vFRIGID motivated our
+the MIST version used inside the FRIGID model, which lives on the
+[`MIST-FRIGID` branch](https://github.com/coleygroup/FRIGID/tree/MIST-FRIGID)
+of the FRIGID repository (not `main`). MIST vFRIGID motivated our
 "Tuned MIST" defaults.
 
 | Setting                      |                                      MIST in Comment |                                                               Official MISTv2 |                                                                                       MIST vFRIGID |               Tuned MIST |

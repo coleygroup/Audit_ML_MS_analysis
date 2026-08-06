@@ -7,7 +7,8 @@ import torch
 import torch.nn.functional as F 
 
 from utils import read_config, pickle_data, write_json
-from mist.data import datasets, splitter, featurizers
+from utils import split_utils
+from mist.data import datasets, featurizers
 
 from model.mist_model import MistNet
 
@@ -54,10 +55,14 @@ def get_checkpoint_path(folder):
 def get_datamodule(config):
 
     # Split data
-    my_splitter = splitter.get_splitter(**config["dataset"])
+    my_splitter = split_utils.get_splitter(**config["dataset"])
 
-    # Update the config now 
-    config["dataset"]["spec_features"] = "peakformula_test"
+    # Update the config now.
+    # Upstream MIST vFRIGID has no "peakformula_test" featurizer; that key
+    # existed only in a local MIST fork, as a subclass forcing
+    # magma_aux_loss=False. Set the flag directly instead.
+    config["dataset"]["spec_features"] = "peakformula"
+    config["dataset"]["magma_aux_loss"] = False
     config["dataset"]["allow_none_smiles"] = False
 
     # Get featurizers

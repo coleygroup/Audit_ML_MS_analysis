@@ -13,8 +13,9 @@ from kronfluence.analyzer import Analyzer, prepare_model
 
 from modules import * 
 from mist.data.datasets import _collate_pairs
-from mist.data import datasets, splitter, featurizers
+from mist.data import datasets, featurizers
 from utils import read_config, load_pickle, pickle_data
+from utils import split_utils
 
 from model.mist_model import MistNet
 
@@ -155,7 +156,7 @@ def get_checkpoint_path(folder):
 def get_datasets(folder, params, top_k):
 
     # Split data
-    my_splitter = splitter.get_splitter(**params["dataset"])
+    my_splitter = split_utils.get_splitter(**params["dataset"])
 
     # Get featurizers
     paired_featurizer = featurizers.get_paired_featurizer(**params["dataset"])

@@ -15,7 +15,7 @@ dataset:
   magma_aux_loss: False
   magma_modulo: 512
   max_peaks: 10
-  train_with_val: True
+  train_with_val: False
 
 model:
   name: "mist"

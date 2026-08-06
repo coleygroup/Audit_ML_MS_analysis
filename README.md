@@ -29,16 +29,18 @@ Values are mean Jaccard similarity between predicted Morgan4096 fingerprints and
 | MassSpecGym | Nearest neighbour† |      0.455 (n=6,571) |   0.953 (n=15,777) |
 | MassSpecGym | DreaMS†            |      0.470 (n=6,571) |   0.966 (n=15,777) |
 
-The corrected reproduction below keeps every method on the same full-test denominator. It includes the MIST-in-Comment numbers, the corrected nearest-neighbour baselines, and the tuned MIST defaults checked in under `benchmarked_models/mist/all_configs/`. NIST2023 is not included in the reproduction. The authors declined our request to access the exact NIST'23-derived artifacts used in the Comment.
+The corrected reproduction below keeps every method on the full test set. It includes the MIST-in-Comment numbers, the corrected nearest-neighbour baselines, and the tuned MIST defaults checked in under `benchmarked_models/mist/all_configs/`. NIST2023 is not included in the reproduction. The authors declined our request to access the exact NIST'23-derived artifacts used in the Comment.
+
+Both MIST rows are trained on the **training split only**; the validation split is held out and never used for fitting. Every row is scored on the same full test set: n=2,744 random and n=2,689 scaffold for NPLIB1, n=16,250 and n=16,042 for MassSpecGym. Matching the NPLIB1 denominator requires the test-set recovery step in [REPRODUCING_RESULTS.md](REPRODUCING_RESULTS.md) Section 3. See the [Changelog](#changelog) for how these numbers were regenerated.
 
 | Dataset     | Model             | Scaffold Jaccard (↑) |   Random Jaccard (↑) |
 | ----------- | ----------------- | -------------------: | -------------------: |
 | NPLIB1      | MIST in Comment   |      0.241 (n=2,689) |      0.547 (n=2,744) |
-| NPLIB1      | Tuned MIST        |  **0.275** (n=2,689) |  **0.721** (n=2,744) |
+| NPLIB1      | Tuned MIST        |  **0.274** (n=2,689) |  **0.706** (n=2,744) |
 | NPLIB1      | Nearest neighbour |      0.195 (n=2,689) |      0.611 (n=2,744) |
 | NPLIB1      | DreaMS            |      0.261 (n=2,689) |      0.691 (n=2,744) |
 | MassSpecGym | MIST in Comment   |     0.267 (n=16,042) |     0.674 (n=16,250) |
-| MassSpecGym | Tuned MIST        | **0.365** (n=16,042) | **0.930** (n=16,250) |
+| MassSpecGym | Tuned MIST        | **0.338** (n=16,042) | **0.914** (n=16,250) |
 | MassSpecGym | Nearest neighbour |     0.230 (n=16,042) |     0.850 (n=16,250) |
 | MassSpecGym | DreaMS            |     0.297 (n=16,042) |     0.895 (n=16,250) |
 
@@ -119,3 +121,16 @@ results. Additional metric-specific caveats are documented in
 - **FLARE**: Chen, Y.Z., Rushing, B. and Hassoun, S. "FLARE: Fine-grained Learning for Alignment of spectra-molecule REpresentation Enhances Metabolite Annotation." (2026). [https://www.ncbi.nlm.nih.gov/pmc/articles/PMC12873900/](https://www.ncbi.nlm.nih.gov/pmc/articles/PMC12873900/)
 - **ICEBERG 2.0**: Wang, R., Manjrekar, M., Mahjour, B. et al. "Neural Spectral Prediction for Structure Elucidation with Tandem Mass Spectrometry." *bioRxiv* (2025). [https://www.biorxiv.org/content/10.1101/2025.05.28.656653](https://www.biorxiv.org/content/10.1101/2025.05.28.656653)
 - **FRIGID**: Bohde, M., Liu, H., Manjrekar, M. et al. "FRIGID: Scaling Diffusion-Based Molecular Generation from Mass Spectra at Training and Inference Time." arXiv:2604.16648 (2026). [https://arxiv.org/abs/2604.16648](https://arxiv.org/abs/2604.16648)
+
+## Changelog
+
+### Tuned MIST rows regenerated on the training split only
+
+All `Tuned MIST` numbers in [README.md](README.md) and
+[DETAILED_RESULTS.md](DETAILED_RESULTS.md) were regenerated from checkpoints
+trained on the **training split only** (`train_with_val: False`), against
+unmodified upstream MIST vFRIGID from the `MIST-FRIGID` branch.
+[Earlier commits](https://github.com/coleygroup/Audit_ML_MS_analysis/tree/8327c017ef7fd78dd63ec97c5f8309dedd42392d)
+merged the validation split into training, which supplied about 21% more
+training data than the `MIST in Comment` configs received, though `MIST in Comment`
+used the validation split to select the best model.

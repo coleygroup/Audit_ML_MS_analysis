@@ -1,8 +1,6 @@
 import os
 from pathlib import Path
 
-import pandas as pd
-
 
 def _maybe_set(config_section, key, value):
     if key not in config_section or config_section[key] in (None, ""):
@@ -30,40 +28,21 @@ def _expand_config_paths(dataset_config):
 
 
 def normalize_split_if_needed(dataset_config, prepared_root=None):
-    split_file = dataset_config.get("split_file")
-    if not split_file:
-        return dataset_config
+    """Deprecated no-op kept for backwards compatibility.
 
-    split_path = Path(split_file)
-    if split_path.suffix.lower() != ".tsv" or not split_path.exists():
-        return dataset_config
+    Split-file normalization used to be done by writing a rewritten TSV to a
+    shared scratch directory. That approach could not work: the rewritten file
+    was read back by MIST with dtype inference, which undid the string cast it
+    existed to apply. It also derived the output name from the split file stem
+    alone, so ``NPLIB1/splits/random.tsv`` and
+    ``massspecgym/splits/random.tsv`` both mapped to ``random_normalized.tsv``
+    in one directory and could silently cross-wire concurrent runs.
 
-    split_df = pd.read_csv(split_path, sep="\t", nrows=1)
-    name_col = dataset_config.get("split_name_col")
-    split_col = dataset_config.get("split_value_col")
-    if name_col is None:
-        name_col = "name" if "name" in split_df.columns else "spec"
-    if split_col is None:
-        split_col = "split" if "split" in split_df.columns else "Fold_0"
-
-    if name_col == "name" and split_col == "split":
-        return dataset_config
-
-    if prepared_root is None:
-        prepared_root = Path(os.environ.get("ML_MS_ANALYSIS_PREPARED_SPLITS", "/tmp/ml_ms_analysis_mist_splits"))
-    prepared_root = Path(prepared_root)
-    prepared_root.mkdir(parents=True, exist_ok=True)
-
-    full_split_df = pd.read_csv(split_path, sep="\t")
-    normalized = full_split_df[[name_col, split_col]].rename(
-        columns={name_col: "name", split_col: "split"}
-    )
-    out_file = prepared_root / f"{split_path.stem}_normalized.tsv"
-    normalized.to_csv(out_file, sep="\t", index=False)
-    dataset_config["split_file_original"] = str(split_path)
-    dataset_config["split_file"] = str(out_file)
-    dataset_config["split_name_col"] = "name"
-    dataset_config["split_value_col"] = "split"
+    Both concerns now live in
+    :mod:`benchmarked_models.mist.utils.split_utils`, which reads the split
+    file with ``dtype=str`` and renames columns in memory. Nothing is written
+    to disk, so ``ML_MS_ANALYSIS_PREPARED_SPLITS`` is no longer consulted.
+    """
     return dataset_config
 
 

@@ -34,11 +34,11 @@ model's training objectives.
 
 | Dataset | Model | Scaffold FP cosine (↑) | Random FP cosine (↑) |
 | ----------- | ------------------ | ---------------------: | -------------------: |
-| NPLIB1 | Tuned MIST | **0.505** (n=2,689) | **0.838** (n=2,744) |
+| NPLIB1 | Tuned MIST | **0.500** (n=2,689) | **0.824** (n=2,744) |
 | NPLIB1 | Nearest neighbour | 0.296 (n=2,689) | 0.671 (n=2,744) |
 | NPLIB1 | Formula-first NN | 0.321 (n=2,689) | 0.770 (n=2,744) |
 | NPLIB1 | DreaMS | 0.379 (n=2,689) | 0.753 (n=2,744) |
-| MassSpecGym | Tuned MIST | **0.514** (n=16,042) | **0.958** (n=16,250) |
+| MassSpecGym | Tuned MIST | **0.496** (n=16,042) | **0.946** (n=16,250) |
 | MassSpecGym | Nearest neighbour | 0.314 (n=16,042) | 0.869 (n=16,250) |
 | MassSpecGym | Formula-first NN | 0.344 (n=16,042) | 0.940 (n=16,250) |
 | MassSpecGym | DreaMS | 0.398 (n=16,042) | 0.912 (n=16,250) |
@@ -54,13 +54,13 @@ evaluations.
 
 | Dataset | Candidate set | Model | Scaffold top-1 / top-5 / top-10 (↑) | Random top-1 / top-5 / top-10 (↑) |
 | ----------- | ------------------ | ------------------ | ----------------------------------: | --------------------------------: |
-| NPLIB1 | PubChem same formula | Tuned MIST | **0.126 / 0.255 / 0.336** (n=2,689) | **0.636 / 0.755 / 0.798** (n=2,744) |
+| NPLIB1 | PubChem same formula | Tuned MIST | **0.125 / 0.238 / 0.320** (n=2,689) | **0.608 / 0.729 / 0.776** (n=2,744) |
 | NPLIB1 | PubChem same formula | Nearest neighbour | 0.055 / 0.142 / 0.195 (n=2,689) | 0.380 / 0.533 / 0.585 (n=2,744) |
 | NPLIB1 | PubChem same formula | DreaMS | 0.100 / 0.230 / 0.296 (n=2,689) | 0.428 / 0.611 / 0.667 (n=2,744) |
-| MassSpecGym | Official formula | Tuned MIST | **0.225 / 0.359 / 0.429** (n=16,042) | **0.891 / 0.948 / 0.960** (n=16,250) |
+| MassSpecGym | Official formula | Tuned MIST | **0.194 / 0.316 / 0.396** (n=16,042) | **0.873 / 0.933 / 0.948** (n=16,250) |
 | MassSpecGym | Official formula | Nearest neighbour | 0.154 / 0.227 / 0.290 (n=16,042) | 0.808 / 0.861 / 0.876 (n=16,250) |
 | MassSpecGym | Official formula | DreaMS | 0.158 / 0.286 / 0.357 (n=16,042) | 0.700 / 0.836 / 0.867 (n=16,250) |
-| MassSpecGym | Official mass | Tuned MIST | **0.321 / 0.486 / 0.562** (n=16,042) | **0.927 / 0.968 / 0.977** (n=16,250) |
+| MassSpecGym | Official mass | Tuned MIST | **0.282 / 0.456 / 0.544** (n=16,042) | **0.911 / 0.957 / 0.969** (n=16,250) |
 | MassSpecGym | Official mass | Nearest neighbour | 0.175 / 0.226 / 0.269 (n=16,042) | 0.838 / 0.875 / 0.885 (n=16,250) |
 | MassSpecGym | Official mass | DreaMS | 0.209 / 0.313 / 0.366 (n=16,042) | 0.795 / 0.876 / 0.899 (n=16,250) |
 
@@ -85,15 +85,21 @@ nearest neighbour when a formula-matched training spectrum exists, otherwise
 fall back to the all-training-set nearest neighbour. This gives the
 formula-filtered baseline the advantage of formula matching without changing
 the denominator. It improves over the all-training-set NN baseline, especially
-on random splits, but tuned MIST remains higher on all four full-test Jaccard
-comparisons.
+on random splits. Tuned MIST remains clearly higher on both scaffold splits
+(0.274 versus 0.212 on NPLIB1, 0.338 versus 0.256 on MassSpecGym), but the
+formula-first variant is slightly ahead on both random splits (0.720 versus
+0.706 on NPLIB1, 0.929 versus 0.914 on MassSpecGym). We attribute this advantage 
+to the fact that there are 78.0% and 98.1% structural leakages in the random 
+splits of NPLIB1 and MassSpecGym, respectively (see the next table). On the 
+scaffold splits, which require more generalization to unseen scaffolds rather 
+than rewarding train-test redundancy, Tuned MIST still outperforms.
 
 | Dataset | Split | Tuned MIST Jaccard (↑) | NN, all train (↑) | Formula-first NN (↑) | Formula-only NN subset (↑) |
 |---|---|---:|---:|---:|---:|
-| NPLIB1 | scaffold | **0.275** (n=2,689) | 0.195 (n=2,689) | 0.212 (n=2,689; fallback=1,661) | 0.282 (n=1,028) |
-| NPLIB1 | random | **0.721** (n=2,744) | 0.611 (n=2,744) | 0.720 (n=2,744; fallback=530) | 0.822 (n=2,214) |
-| MassSpecGym | scaffold | **0.365** (n=16,042) | 0.230 (n=16,042) | 0.256 (n=16,042; fallback=9,471) | 0.455 (n=6,571) |
-| MassSpecGym | random | **0.930** (n=16,250) | 0.850 (n=16,250) | 0.929 (n=16,250; fallback=473) | 0.953 (n=15,777) |
+| NPLIB1 | scaffold | **0.274** (n=2,689) | 0.195 (n=2,689) | 0.212 (n=2,689; fallback=1,661) | 0.282 (n=1,028) |
+| NPLIB1 | random | 0.706 (n=2,744) | 0.611 (n=2,744) | **0.720** (n=2,744; fallback=530) | 0.822 (n=2,214) |
+| MassSpecGym | scaffold | **0.338** (n=16,042) | 0.230 (n=16,042) | 0.256 (n=16,042; fallback=9,471) | 0.455 (n=6,571) |
+| MassSpecGym | random | 0.914 (n=16,250) | 0.850 (n=16,250) | **0.929** (n=16,250; fallback=473) | 0.953 (n=15,777) |
 
 The next table asks a narrower diagnostic question: on the favorable
 subset that the formula-filtered nearest-neighbour code can score, how much of
@@ -115,11 +121,11 @@ search generalizes better than MIST.
 
 | Dataset | Model                      |                Scaffold Jaccard (↑) |                   Random Jaccard (↑) |
 | ----------- | -------------------------- | ----------------------------------: | -----------------------------------: |
-| NPLIB1 | Tuned MIST                 |  **0.320** (n=1,028; **leak=4.2%**) |          0.801 (n=2,214; leak=78.0%) |
+| NPLIB1 | Tuned MIST                 |  **0.312** (n=1,028; **leak=4.2%**) |          0.791 (n=2,214; leak=78.0%) |
 | NPLIB1 | Formula NN                 |          0.283 (n=1,028; leak=4.2%) |          0.829 (n=2,214; leak=78.0%) |
 | NPLIB1 | Formula DreaMS NN          |          0.293 (n=1,028; leak=4.2%) |  **0.830** (n=2,214; **leak=78.0%**) |
 | NPLIB1 | FP oracle (NN upper bound) |        _0.326_ (n=1,028; leak=4.2%) |        _0.869_ (n=2,214; leak=78.0%) |
-| MassSpecGym | Tuned MIST                 | **0.503** (n=6,571; **leak=34.8%**) |         0.941 (n=15,777; leak=98.1%) |
+| MassSpecGym | Tuned MIST                 | **0.483** (n=6,571; **leak=34.8%**) |         0.933 (n=15,777; leak=98.1%) |
 | MassSpecGym | Formula NN                 |         0.455 (n=6,571; leak=34.8%) | **0.953** (n=15,777; **leak=98.1%**) |
 | MassSpecGym | Formula DreaMS NN          |         0.470 (n=6,571; leak=34.8%) | **0.966** (n=15,777; **leak=98.1%**) |
 | MassSpecGym | FP oracle (NN upper bound) |       _0.516_ (n=6,571; leak=34.8%) |       _0.987_ (n=15,777; leak=98.1%) |
@@ -156,17 +162,17 @@ does not close the gap to tuned MIST.
 
 | Dataset     | Split    | Tuned MIST Jaccard (↑) | NN k=1 Jaccard (↑) | kNN k=3 Jaccard (↑) | kNN k=5 Jaccard (↑) |
 |-------------|----------|-----------------------:|-------------------:|--------------------:|--------------------:|
-| NPLIB1      | scaffold |    **0.275** (n=2,689) |              0.195 |               0.195 |               0.189 |
-| NPLIB1      | random   |    **0.721** (n=2,744) |              0.611 |               0.512 |               0.456 |
-| MassSpecGym | scaffold |   **0.365** (n=16,042) |              0.230 |               0.227 |               0.217 |
-| MassSpecGym | random   |   **0.930** (n=16,250) |              0.850 |               0.735 |               0.668 |
+| NPLIB1      | scaffold |    **0.274** (n=2,689) |              0.195 |               0.195 |               0.189 |
+| NPLIB1      | random   |    **0.706** (n=2,744) |              0.611 |               0.512 |               0.456 |
+| MassSpecGym | scaffold |   **0.338** (n=16,042) |              0.230 |               0.227 |               0.217 |
+| MassSpecGym | random   |   **0.914** (n=16,250) |              0.850 |               0.735 |               0.668 |
 
 | Dataset     | Split    | Tuned MIST FP Cosine (↑) |  NN k=1 FP Cosine (↑) | k=3 vote FP Cosine (↑) | k=3 average FP Cosine (↑) | k=5 vote FP Cosine (↑) | k=5 average FP Cosine (↑) |
 |-------------|----------|-------------------------:|----------------------:|-----------------------:|--------------------------:|-----------------------:|--------------------------:|
-| NPLIB1      | scaffold |                **0.505** |                 0.296 |                  0.315 |                     0.344 |                  0.322 |                     0.361 |
-| NPLIB1      | random   |                **0.838** |                 0.671 |                  0.602 |                     0.654 |                  0.562 |                     0.633 |
-| MassSpecGym | scaffold |                **0.514** |                 0.314 |                  0.325 |                     0.349 |                  0.331 |                     0.363 |
-| MassSpecGym | random   |                **0.958** |                 0.869 |                  0.780 |                     0.830 |                  0.733 |                     0.800 |
+| NPLIB1      | scaffold |                **0.500** |                 0.296 |                  0.315 |                     0.344 |                  0.322 |                     0.361 |
+| NPLIB1      | random   |                **0.824** |                 0.671 |                  0.602 |                     0.654 |                  0.562 |                     0.633 |
+| MassSpecGym | scaffold |                **0.496** |                 0.314 |                  0.325 |                     0.349 |                  0.331 |                     0.363 |
+| MassSpecGym | random   |                **0.946** |                 0.869 |                  0.780 |                     0.830 |                  0.733 |                     0.800 |
 
 ## Notes on Interpretation
 

@@ -4,7 +4,7 @@ from tqdm import tqdm
 from pathlib import Path
 from sklearn.metrics.pairwise import cosine_similarity
 
-from utils import load_pickle, load_json, pickle_data
+from utils import load_pickle, load_json, pickle_data, normalize_rows, write_fallback_report
 
 def string_to_bits(string): 
 
@@ -98,8 +98,13 @@ if __name__ == "__main__":
                 train_FP = np.array([FP_info[id_] for id_ in train_ids])
                 train_formula = np.array([formula_info[id_] for id_ in train_ids])
 
+                # Row-normalised training embeddings, used by the no-same-formula fallback
+                # below. Computed once rather than per query.
+                train_MS_normed = normalize_rows(train_MS)
+
                 computed_test_ids, top_train_ids = [],[]
                 computed_test_FP, pred_FP = [],[]
+                fallback_test_ids = []
 
                 for test_idx, id_ in tqdm(enumerate(test_ids)):
 
@@ -108,19 +113,29 @@ if __name__ == "__main__":
 
                     # Let us sieve out the train 
                     sieved_idx = [idx for idx, f in enumerate(train_formula) if f == test_formula]
-                    if len(sieved_idx) == 0: continue
 
-                    # Get the prediction now
-                    sim = cosine_similarity([test_MS[test_idx]], train_MS[sieved_idx])
-                    train_idx = np.argmax(sim, axis = 1)[0]
+                    # When no training spectrum shares the query formula, fall back to the
+                    # whole training set instead of dropping the test entry. The original
+                    # `continue` silently shrank the test set to the subset whose formula is
+                    # covered by training -- an easier set than the one every other method
+                    # is scored on.
+                    if len(sieved_idx) == 0:
+                        fallback_test_ids.append(id_)
+                        sim = train_MS_normed @ normalize_rows([test_MS[test_idx]])[0]
+                        train_idx = int(np.argmax(sim))
+                    else:
+                        # Get the prediction now
+                        sim = cosine_similarity([test_MS[test_idx]], train_MS[sieved_idx])
+                        train_idx = int(sieved_idx[np.argmax(sim, axis = 1)[0]])
 
                     computed_test_ids.append(id_)
-                    top_train_ids.append(train_ids[sieved_idx[train_idx]])
+                    top_train_ids.append(train_ids[train_idx])
 
                     computed_test_FP.append(test_FP)
-                    pred_FP.append(train_FP[sieved_idx[train_idx]])
+                    pred_FP.append(train_FP[train_idx])
                 
                 pickle_data((computed_test_ids, top_train_ids, computed_test_FP, pred_FP), output_path)
+                write_fallback_report(cache_folder / f"{dataset}_{split}_dreaMS_fallback.json", test_ids, fallback_test_ids)
         
         else:
 
@@ -139,8 +154,11 @@ if __name__ == "__main__":
                 train_MS = np.array(load_pickle(dreaMS_embs_folder / dataset / split / "train.pkl"))
                 test_MS = np.array(load_pickle(dreaMS_embs_folder / dataset / split / "test.pkl"))
 
+                train_MS_normed = normalize_rows(train_MS)
+
                 computed_test_ids, top_train_ids = [],[]
                 computed_test_FP, pred_FP = [],[]
+                fallback_test_ids = []
                 
                 for test_idx, te_id in tqdm(enumerate(test_ids)):
 
@@ -148,17 +166,26 @@ if __name__ == "__main__":
                     test_formula = test_info["formula"]
                     test_FP = string_to_bits(test_info["FPs"]["morgan4_4096"])
 
-                    if test_formula not in formula_info: continue 
-
-                    sieved_idx = formula_info[test_formula]
-                    sim = cosine_similarity([test_MS[test_idx]], train_MS[sieved_idx])
-                    train_idx = np.argmax(sim, axis = 1)[0]
+                    # When no training spectrum shares the query formula, fall back to the
+                    # whole training set instead of dropping the test entry. The original
+                    # `continue` silently shrank the test set to the subset whose formula is
+                    # covered by training -- an easier set than the one every other method
+                    # is scored on.
+                    if test_formula not in formula_info:
+                        fallback_test_ids.append(te_id)
+                        sim = train_MS_normed @ normalize_rows([test_MS[test_idx]])[0]
+                        train_idx = int(np.argmax(sim))
+                    else:
+                        sieved_idx = formula_info[test_formula]
+                        sim = cosine_similarity([test_MS[test_idx]], train_MS[sieved_idx])
+                        train_idx = int(sieved_idx[np.argmax(sim, axis = 1)[0]])
 
                     computed_test_ids.append(te_id)
-                    top_train_ids.append(train_ids[sieved_idx[train_idx]])
+                    top_train_ids.append(train_ids[train_idx])
 
                     computed_test_FP.append(test_FP)
-                    pred_FP.append(train_FP[sieved_idx[train_idx]])
+                    pred_FP.append(train_FP[train_idx])
 
                 pickle_data((computed_test_ids, top_train_ids, computed_test_FP, pred_FP), output_path)
+                write_fallback_report(cache_folder / f"{dataset}_{split}_dreaMS_fallback.json", test_ids, fallback_test_ids)
 

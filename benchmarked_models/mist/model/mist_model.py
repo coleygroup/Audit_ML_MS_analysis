@@ -13,7 +13,13 @@ import pytorch_lightning as pl
 from modules import modules
 from mist.data import featurizers
 
-from learning_to_split import compute_marginal_z_loss, compute_y_given_z_loss, compute_gap_loss
+# `learning_to_split` is only used by MistNetSplitter (the learning-to-split split
+# generator) and is not vendored in this repository. Import it lazily so that the
+# MistNet training/prediction path, which never touches these functions, can run.
+try:
+    from learning_to_split import compute_marginal_z_loss, compute_y_given_z_loss, compute_gap_loss
+except ImportError:  # pragma: no cover - only hit when MistNetSplitter is unused
+    compute_marginal_z_loss = compute_y_given_z_loss = compute_gap_loss = None
 
 def cosine_loss(x, y):
 

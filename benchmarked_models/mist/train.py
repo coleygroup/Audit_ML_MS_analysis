@@ -15,6 +15,10 @@ from pytorch_lightning.callbacks import ModelCheckpoint, EarlyStopping
 
 from mist.data import datasets, splitter, featurizers
 from utils import read_config, load_pickle, pickle_data
+# Use the repository-side splitter: MIST's PresetSpectraSplitter reads the split
+# TSV without dtype=str, so NPLIB1's numeric spectrum names never match and every
+# split silently comes back empty. See utils/split_utils.py.
+from utils import split_utils
 
 # Refine the mist model in our own directory 
 from model import mist_model
@@ -65,7 +69,7 @@ def update_config(args, config):
 def get_datamodule(config):
 
     # Split data
-    my_splitter = splitter.get_splitter(**config["dataset"])
+    my_splitter = split_utils.get_splitter(**config["dataset"])
 
     # Get model class
     model_class = mist_model.MistNet
@@ -165,7 +169,11 @@ def train(config):
     monitor = config["callbacks"]["val_monitor"]
     checkpoint_callback = ModelCheckpoint(monitor=monitor,
                                           dirpath = results_dir,
-                                          filename = '{epoch:03d}-{val_bce_loss:.5f}', # Hack 
+                                          # Name checkpoints by the monitored metric: predict.py picks the
+                                          # best checkpoint by parsing this number, so hard-coding
+                                          # val_bce_loss would select on a different metric than the one
+                                          # being monitored whenever val_monitor is not val_bce_loss.
+                                          filename = '{epoch:03d}-{' + monitor + ':.5f}',
                                           every_n_train_steps = config["trainer"]["log_every_n_steps"], 
                                           save_top_k = 2, mode = "min")
     

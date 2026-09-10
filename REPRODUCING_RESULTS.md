@@ -323,6 +323,16 @@ python benchmarked_models/nearest_neighbour/02_compute_nn.py \
   --candidate-policy same_formula_candidates_fallback
 ```
 
+`--input-source` selects where the binned spectrum comes from, and the two
+sources are not interchangeable for NPLIB1: `mgf` bins the raw MGF intensities,
+while `processed_pickle` bins the pickle's base-peak-normalised
+`intensity_norm` field, which is the source the Comment's own pipeline used.
+The peaks, formulas and fingerprints are identical between them; only the
+intensity scaling differs, which changes how much the fixed precursor bin
+weighs in the cosine. Binned NN on NPLIB1 moves from 0.212 (scaffold) / 0.720
+(random) under `mgf` to 0.195 / 0.695 under `processed_pickle`; MassSpecGym and
+DreaMS NN are unaffected, and the scaffold conclusions hold under either source.
+
 Cache DreaMS embeddings, then run DreaMS nearest neighbour:
 
 ```bash

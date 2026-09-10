@@ -178,7 +178,7 @@ def train(config):
     else:
         checkpoint_callback = ModelCheckpoint(monitor=monitor,
                                               dirpath = results_dir,
-                                              filename = '{epoch:03d}-{val_loss:.5f}',
+                                              filename = '{epoch:03d}-{' + monitor + ':.5f}',
                                               every_n_train_steps = config["trainer"]["log_every_n_steps"],
                                               save_top_k = 2, mode = "min",
                                               save_last=save_last)

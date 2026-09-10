@@ -20,7 +20,7 @@ from rdkit import RDLogger
 from rdkit.Chem import AllChem
 
 
-METHODS = ("Tuned MIST", "Nearest neighbour", "DreaMS NN")
+METHODS = ("Corrected MIST", "Nearest neighbour", "DreaMS NN")
 SPLITS = ("random", "scaffold")
 WORKER_QUERIES_BY_FORMULA: dict[str, list[dict[str, Any]]] = {}
 
@@ -113,7 +113,7 @@ def load_mist_queries(
                 metadata,
                 "NPLIB1",
                 split,
-                "Tuned MIST",
+                "Corrected MIST",
                 spec_id,
                 pred,
             )
@@ -128,7 +128,7 @@ def load_mist_queries(
             metadata,
             "NPLIB1",
             split,
-            "Tuned MIST",
+            "Corrected MIST",
             spec_id,
             record["pred"],
         )
@@ -341,12 +341,12 @@ def main() -> None:
     parser.add_argument(
         "--nn-dir",
         type=Path,
-        default=Path("results/nearest_neighbour/nn_sim/all_train_candidates"),
+        default=Path("results/nearest_neighbour/nn_sim/same_formula_candidates_fallback"),
     )
     parser.add_argument(
         "--dreams-dir",
         type=Path,
-        default=Path("results/nearest_neighbour/nn_sim_dreaMS/all_train_candidates"),
+        default=Path("results/nearest_neighbour/nn_sim_dreaMS/same_formula_candidates_fallback"),
     )
     parser.add_argument(
         "--output-prefix",

@@ -9,6 +9,7 @@ import pandas as pd
 
 VALID_CANDIDATE_POLICIES = {
     "all_train_candidates",
+    "same_formula_candidates_fallback",
     "same_formula_candidates_full",
     "same_formula_candidates_legacy",
     "same_formula_candidates_skip_missing",
@@ -17,6 +18,15 @@ VALID_CANDIDATE_POLICIES = {
 SKIP_MISSING_FORMULA_POLICIES = {
     "same_formula_candidates_legacy",
     "same_formula_candidates_skip_missing",
+}
+
+# Formula-first with a fallback: restrict candidates to training spectra sharing
+# the query formula, and when none exist search the whole training set rather
+# than dropping the query. This is the default: it keeps the formula prior that
+# makes nearest neighbour strong while still answering every test spectrum, so
+# the baseline and the fingerprint models are scored on one denominator.
+FALLBACK_TO_ALL_TRAIN_POLICIES = {
+    "same_formula_candidates_fallback",
 }
 
 

@@ -9,54 +9,67 @@ MassSpecGym, each under random and scaffold splits.
 
 ## 1. Environment
 
-MIST training depends on **MIST vFRIGID**, meaning the MIST version used inside
-the FRIGID model, not the original MIST repository/package. It lives on the
-**`MIST-FRIGID` branch** of the FRIGID repository, **not** on `main`.
+MIST training depends on **upstream MIST** from the
+[`main_v2` branch](https://github.com/samgoldman97/mist/tree/main_v2) of the MIST
+repository, which is that repository's default branch. No fork, patched copy, or
+vendored variant of MIST is used.
 
-On the `MIST-FRIGID` branch the package lives at `src/mist` and is installed by
-the checkout's own `pyproject.toml`. That branch has its own lightweight
-`requirements.txt`; the `ms-pred` submodule and the heavier FRIGID
-dependency set used for diffusion-based generation are **not** needed for the
-MIST encoder runs reported here.
+`main_v2` is the branch this codebase is written against. The older
+`nmi_paper_v1` branch cannot be substituted: its `get_splitter` takes a
+positional `splitter_name` argument that this repository never passes, and its
+MAGMa featurizer expects a different on-disk layout (`magma_smiles_fp.hdf5` plus
+index files) from the per-spectrum `magma_tsv/<spec>.magma` files the published
+data export ships.
 
 ```bash
-mamba create -y -n ml-ms-analysis python=3.9
+git clone --branch main_v2 --depth 1 \
+  https://github.com/samgoldman97/mist.git external/mist
+
+# environment.yml declares `name: ms-gen`; -n overrides it.
+mamba env create -n ml-ms-analysis -f external/mist/environment.yml
 mamba activate ml-ms-analysis
 
-mkdir -p external
-git clone --branch MIST-FRIGID --depth 1 \
-  https://github.com/coleygroup/FRIGID.git external/FRIGID-MIST
-
-cd external/FRIGID-MIST
-pip install torch==2.7.0 torchvision==0.22.0 torchaudio==2.7.0 \
-  --index-url https://download.pytorch.org/whl/cu118
-pip install -r requirements.txt
-pip install -e .
-cd ../..
-
-pip install numpy pandas scipy scikit-learn tqdm h5py pyyaml rdkit
+cd external/mist && pip install -e . && cd ../..
+pip install tqdm pyyaml
 ```
 
-Verify that Python resolves `mist.data` to the MIST vFRIGID implementation.
-Note that `mist` on this branch is an implicit namespace package (it has no
-`__init__.py`), so `inspect.getfile(mist)` raises `TypeError`; check a
-submodule instead:
+`environment.yml` pins Python 3.8, `pytorch=1.9.*`, `pytorch-lightning=1.6.*`,
+and `cudatoolkit=11.1`. Keep `pytorch-lightning` at `1.6.*`: `train.py` relies on
+the PL 1.6 `Trainer(devices=, accelerator="gpu")` signature and on
+`pytorch_lightning.utilities.rank_zero`. Confirm CUDA works on your card before
+training:
 
 ```bash
-python - <<'PY'
+python -c "import torch; print(torch.cuda.get_device_name(0)); print(torch.zeros(1).cuda())"
+```
+
+Verify that Python resolves `mist.data` to the cloned checkout:
+
+```bash
+python - <<'EOF'
 import mist.data.datasets as d
 from mist.data.datasets import SpectraMolDataset, SpecDataModule
 
 print(d.__file__)
-PY
+EOF
 ```
 
-The printed path must point inside `external/FRIGID-MIST`. If it does not, put
-that source tree first on `PYTHONPATH`:
+The printed path must point inside `external/mist`.
 
-```bash
-export PYTHONPATH="$PWD/external/FRIGID-MIST/src:$PYTHONPATH"
-```
+Two repository-side fixes are required, and both are already checked in:
+
+- `benchmarked_models/mist/model/mist_model.py` imports `learning_to_split`,
+  which is not present in this repository or in MIST. The three functions it
+  provides are used only by `MistNetSplitter`, never by `MistNet`, which is the
+  class both entry points instantiate, so the import is optional and fails
+  loudly only if the learning-to-split path is actually used.
+- `benchmarked_models/mist/utils/split_utils.py` re-reads split TSVs with
+  `dtype=str`. Upstream `PresetSpectraSplitter` uses a bare `pd.read_csv`, so
+  NPLIB1's purely numeric spectrum names are inferred as `int64` and never match
+  the string names from the `.ms` file stems. Without this, **every NPLIB1 split
+  silently comes back 0/0/0**; MassSpecGym is unaffected because its names are
+  non-numeric. Confirm the fix is active by checking that a training run logs
+  `Len of train: 12665` (NPLIB1 random) rather than `0`.
 
 The DreaMS nearest-neighbour baseline also requires DreaMS and the pretrained
 DreaMS weights from [Zenodo record 10997887](https://zenodo.org/records/10997887).
@@ -83,7 +96,7 @@ under `/path/to/scratch/mist_repro/manifests/runtime_configs/`, and a manifest
 at `/path/to/scratch/mist_repro/manifests/google_drive_mist_outputs_manifest.json`.
 Use that manifest to check split counts, label coverage, and train/val/test
 overlap before launching training. The helper emits both the tuned configs
-reported as `Tuned MIST` and the underperforming paper-style configs reported as
+reported as `Corrected MIST` and the underperforming paper-style configs reported as
 `MIST in Comment`.
 
 If you need to rebuild from the original upstream MIST data exports instead,
@@ -288,7 +301,11 @@ benchmarked_models/mist/results/mist/<run>/test_performance.json
 
 ## 5. Corrected Nearest-Neighbour Baselines
 
-Run binned-spectrum nearest neighbour on the full training candidate set:
+Run the nearest-neighbour baselines under the default formula-first policy
+(`same_formula_candidates_fallback`): candidates are restricted to training
+spectra sharing the query formula, and when no such spectrum exists the search
+falls back to the whole training set rather than dropping the query. Every test
+spectrum is answered, so the baseline and MIST share one denominator:
 
 ```bash
 python benchmarked_models/nearest_neighbour/02_compute_nn.py \
@@ -296,14 +313,14 @@ python benchmarked_models/nearest_neighbour/02_compute_nn.py \
   --datasets NPLIB1 \
   --splits scaffold random \
   --metadata-file data/metadata/NPLIB1_metadata.tsv \
-  --candidate-policy all_train_candidates
+  --candidate-policy same_formula_candidates_fallback
 
 python benchmarked_models/nearest_neighbour/02_compute_nn.py \
   --input-source mgf \
   --datasets massspecgym \
   --splits scaffold random \
   --metadata-file data/metadata/massspecgym_msg_all_metadata.tsv \
-  --candidate-policy all_train_candidates
+  --candidate-policy same_formula_candidates_fallback
 ```
 
 Cache DreaMS embeddings, then run DreaMS nearest neighbour:
@@ -318,14 +335,14 @@ python benchmarked_models/nearest_neighbour/01b_compute_nn_dreaMS.py \
   --datasets NPLIB1 \
   --splits scaffold random \
   --metadata-file data/metadata/NPLIB1_metadata.tsv \
-  --candidate-policy all_train_candidates
+  --candidate-policy same_formula_candidates_fallback
 
 python benchmarked_models/nearest_neighbour/01b_compute_nn_dreaMS.py \
   --input-source mgf \
   --datasets massspecgym \
   --splits scaffold random \
   --metadata-file data/metadata/massspecgym_msg_all_metadata.tsv \
-  --candidate-policy all_train_candidates
+  --candidate-policy same_formula_candidates_fallback
 ```
 
 Run the full-training-set fingerprint oracle upper bound:
@@ -336,14 +353,14 @@ python benchmarked_models/nearest_neighbour/03_compute_fp_oracle_upper_bound.py 
   --datasets NPLIB1 \
   --splits scaffold random \
   --metadata-file data/metadata/NPLIB1_metadata.tsv \
-  --candidate-policy all_train_candidates
+  --candidate-policy same_formula_candidates_fallback
 
 python benchmarked_models/nearest_neighbour/03_compute_fp_oracle_upper_bound.py \
   --input-source mgf \
   --datasets massspecgym \
   --splits scaffold random \
   --metadata-file data/metadata/massspecgym_msg_all_metadata.tsv \
-  --candidate-policy all_train_candidates
+  --candidate-policy same_formula_candidates_fallback
 ```
 
 ## 6. Formula-Filtered Diagnostic
@@ -433,8 +450,8 @@ python scripts/compute_nplib1_pubchem_retrieval.py \
     results/comparison/nplib1_pubchem_api_missing_candidates.tsv.gz \
   --candidate-set pubchem_formula_hdf5_plus_api \
   --mist-results-root benchmarked_models/mist/results/mist \
-  --nn-dir results/nearest_neighbour/nn_sim/all_train_candidates \
-  --dreams-dir results/nearest_neighbour/nn_sim_dreaMS/all_train_candidates \
+  --nn-dir results/nearest_neighbour/nn_sim/same_formula_candidates_fallback \
+  --dreams-dir results/nearest_neighbour/nn_sim_dreaMS/same_formula_candidates_fallback \
   --output-prefix results/comparison/nplib1_pubchem_formula_retrieval_full_test_methods \
   --workers 8
 ```
@@ -449,8 +466,8 @@ python scripts/run_mist_msg_retrieval.py \
   --labels-file data/metadata/massspecgym_msg_all_metadata.tsv \
   --candidates-root data/massspecgym \
   --mist-results-root benchmarked_models/mist/results/mist \
-  --nn-dir results/nearest_neighbour/nn_sim/all_train_candidates \
-  --dreams-dir results/nearest_neighbour/nn_sim_dreaMS/all_train_candidates \
+  --nn-dir results/nearest_neighbour/nn_sim/same_formula_candidates_fallback \
+  --dreams-dir results/nearest_neighbour/nn_sim_dreaMS/same_formula_candidates_fallback \
   --output-dir results/comparison/massspecgym_retrieval
 ```
 
@@ -461,8 +478,8 @@ Build machine-readable tables from the generated artifacts:
 ```bash
 python scripts/build_readme_tables.py \
   --mist-results-root benchmarked_models/mist/results/mist \
-  --nn-dir results/nearest_neighbour/nn_sim/all_train_candidates \
-  --dreams-dir results/nearest_neighbour/nn_sim_dreaMS/all_train_candidates \
+  --nn-dir results/nearest_neighbour/nn_sim/same_formula_candidates_fallback \
+  --dreams-dir results/nearest_neighbour/nn_sim_dreaMS/same_formula_candidates_fallback \
   --formula-nn-dir results/nearest_neighbour/nn_sim/same_formula_candidates_skip_missing \
   --formula-dreams-dir results/nearest_neighbour/nn_sim_dreaMS/same_formula_candidates_skip_missing \
   --formula-oracle-dir results/nearest_neighbour/fp_oracle_upper_bound/same_formula_candidates_skip_missing \

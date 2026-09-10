@@ -229,12 +229,36 @@ def summarize_prediction_records(records: list[dict[str, Any]]) -> dict[str, Any
     }
 
 
+def mist_calibration_metadata(pkl_path: Path) -> dict[str, Any]:
+    """Threshold provenance written next to a MIST test_results.pkl.
+
+    predict.py fits the binarisation threshold on the validation split and
+    records it, the validation Jaccard behind it, and the score the same
+    predictions would earn at the original hard-coded 0.5 cut.
+    """
+    meta_path = pkl_path.parent / "test_performance.json"
+    if not meta_path.exists():
+        return {}
+    payload = json.loads(meta_path.read_text())
+    return {
+        "threshold": payload.get("threshold"),
+        "val_jaccard": payload.get("val_jaccard"),
+        "mean_jaccard_at_0.5": payload.get("jaccard_at_0.5"),
+    }
+
+
 def build_full_test_table(args: argparse.Namespace) -> pd.DataFrame:
     rows = []
     for dataset in DATASETS:
         dataset_label = "MassSpecGym" if dataset == "massspecgym" else dataset
         mist_prefix = "MSG" if dataset == "massspecgym" else "NPLIB1"
         for split in SPLITS:
+            # Structural leakage over the FULL test split. The formula-filtered
+            # table reports leakage over its favourable subset; the headline
+            # table is scored on every test spectrum, so it needs its own figure.
+            test_mgf = args.mgf_root / dataset / split / "test.mgf"
+            full_test_ids = list(iter_mgf_ids(test_mgf)) if test_mgf.exists() else []
+            leakage = leakage_for_subset(args, dataset, split, full_test_ids)
             sources = [
                 (
                     "MIST in Comment",
@@ -242,7 +266,7 @@ def build_full_test_table(args: argparse.Namespace) -> pd.DataFrame:
                     iter_mist_predictions,
                 ),
                 (
-                    "Tuned MIST",
+                    "Corrected MIST",
                     args.mist_results_root / f"{mist_prefix}_MIST_4096_{split}" / "test_results.pkl",
                     iter_mist_predictions,
                 ),
@@ -270,6 +294,11 @@ def build_full_test_table(args: argparse.Namespace) -> pd.DataFrame:
                     )
                     continue
                 summary = summarize_prediction_records(list(loader(path)))
+                calibration = (
+                    mist_calibration_metadata(path)
+                    if loader is iter_mist_predictions
+                    else {}
+                )
                 rows.append(
                     {
                         "dataset": dataset_label,
@@ -278,6 +307,8 @@ def build_full_test_table(args: argparse.Namespace) -> pd.DataFrame:
                         "source": str(path),
                         "status": "ok",
                         **summary,
+                        **calibration,
+                        **leakage,
                     }
                 )
     return pd.DataFrame(rows)
@@ -306,7 +337,7 @@ def build_formula_filtered_table(args: argparse.Namespace) -> pd.DataFrame:
             leakage = leakage_for_subset(args, dataset, split, subset_ids)
             sources = [
                 (
-                    "Tuned MIST",
+                    "Corrected MIST",
                     mist_path,
                     iter_mist_predictions,
                     "model_prediction_on_same_formula_subset",
@@ -331,7 +362,7 @@ def build_formula_filtered_table(args: argparse.Namespace) -> pd.DataFrame:
                 ),
             ]
             for method, path, loader, candidate_policy in sources:
-                if method == "Tuned MIST" and subset_source is None:
+                if method == "Corrected MIST" and subset_source is None:
                     rows.append(
                         {
                             "dataset": dataset_label,
@@ -363,7 +394,7 @@ def build_formula_filtered_table(args: argparse.Namespace) -> pd.DataFrame:
                         }
                     )
                     continue
-                records = mist_records if method == "Tuned MIST" and mist_records is not None else list(loader(path))
+                records = mist_records if method == "Corrected MIST" and mist_records is not None else list(loader(path))
                 if subset_source is not None:
                     records = [r for r in records if r["spec_id"] in subset_id_set]
                 summary = summarize_prediction_records(records)
@@ -403,7 +434,7 @@ def build_retrieval_table(args: argparse.Namespace) -> pd.DataFrame:
 
     for split in SPLITS:
         for method_key, method_label in [
-            ("tuned_mist", "Tuned MIST"),
+            ("tuned_mist", "Corrected MIST"),
             ("nearest_neighbour", "Nearest neighbour"),
             ("dreams_nn", "DreaMS"),
         ]:
@@ -433,8 +464,8 @@ def build_retrieval_table(args: argparse.Namespace) -> pd.DataFrame:
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--mist-results-root", type=Path, default=Path("benchmarked_models/mist/results/mist"))
-    parser.add_argument("--nn-dir", type=Path, default=Path("results/nearest_neighbour/nn_sim/all_train_candidates"))
-    parser.add_argument("--dreams-dir", type=Path, default=Path("results/nearest_neighbour/nn_sim_dreaMS/all_train_candidates"))
+    parser.add_argument("--nn-dir", type=Path, default=Path("results/nearest_neighbour/nn_sim/same_formula_candidates_fallback"))
+    parser.add_argument("--dreams-dir", type=Path, default=Path("results/nearest_neighbour/nn_sim_dreaMS/same_formula_candidates_fallback"))
     parser.add_argument("--formula-nn-dir", type=Path, default=Path("results/nearest_neighbour/nn_sim/same_formula_candidates_skip_missing"))
     parser.add_argument("--formula-dreams-dir", type=Path, default=Path("results/nearest_neighbour/nn_sim_dreaMS/same_formula_candidates_skip_missing"))
     parser.add_argument("--formula-oracle-dir", type=Path, default=Path("results/nearest_neighbour/fp_oracle_upper_bound/same_formula_candidates_skip_missing"))

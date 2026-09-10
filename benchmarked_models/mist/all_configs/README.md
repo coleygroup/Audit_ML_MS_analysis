@@ -1,64 +1,72 @@
 # MIST Config Families
 
 This folder contains the runnable configs used by this reproduction. There are
-two checked-in families:
+two checked-in families, and they differ by exactly two lines:
 
-- `*_mist_config.yaml`: current default tuned configs.
-- `*_original_mist_config.yaml`: underperforming configs used for the `MIST in Comment` rows.
+- `*_original_mist_config.yaml`: the configuration used for the `MIST in Comment`
+  rows, which trains with a BCE objective.
+- `*_mist_config.yaml`: `Corrected MIST`, the same architecture trained with MIST's own
+  default cosine objective.
 
-The table below also includes two reference families that are not fully
-materialized as YAML files here: Official MISTv2, and **MIST vFRIGID**, meaning
-the MIST version used inside the FRIGID model, which lives on the
-[`MIST-FRIGID` branch](https://github.com/coleygroup/FRIGID/tree/MIST-FRIGID)
-of the FRIGID repository (not `main`). MIST vFRIGID motivated our
-"Tuned MIST" defaults.
+Both families are run against unmodified upstream MIST from the
+[`main_v2` branch](https://github.com/samgoldman97/mist/tree/main_v2) of the MIST
+repository. No fork, patched copy, or vendored variant of MIST is used anywhere
+in this reproduction.
 
-| Setting                      |                                      MIST in Comment |                                                               Official MISTv2 |                                                                                       MIST vFRIGID |               Tuned MIST |
-|------------------------------|--------------------------------------------------------------:|------------------------------------------------------------------------------:|---------------------------------------------------------------------------------------------------:|-------------------------:|
-| Configurations               |                                 `*_original_mist_config.yaml` | [MIST repository](https://github.com/samgoldman97/mist/tree/main_v2#training) | [FRIGID repository](https://github.com/coleygroup/FRIGID/tree/MIST-FRIGID#training-models-) |     `*_mist_config.yaml` |
-| Purpose                      | Reproduce the improper MIST configuration used in the Comment |                          What a faithful MIST reproduction should be based on |                                                          MIST version used inside the FRIGID model |  Tuned MIST in this repo |
-| Loss                         |                                                           BCE |                                                                        cosine |                                                                                             cosine |                   cosine |
-| Hidden size                  |                                                         `256` |                                                                `256` or `512` |                                                                                              `640` |                   `1024` |
-| Batch size                   |                                                         `512` |                                                                         `128` |                                                                                              `256` |                    `256` |
-| Max epochs                   |                                                         `200` |                                                                         `600` |                                                                                              `150` |                    `150` |
-| Max peaks                    |                                               package default |                                                                          `15` |                                                                                               `10` |                     `10` |
-| EMA                          |                                                           off |                                                                           off |                                                                                        on, `0.995` |              on, `0.995` |
-| LR schedule                  |                                               no LR scheduler |                                                               no LR scheduler |                                                                           cosine schedule + warmup | cosine schedule + warmup |
+| Setting              |                MIST in Comment |                    Corrected MIST |
+|----------------------|-------------------------------:|----------------------------------:|
+| Configurations       | `*_original_mist_config.yaml`  |             `*_mist_config.yaml`  |
+| Loss                 |                            BCE |                        **cosine** |
+| `val_monitor`        |                 `val_bce_loss` |              **`val_cos_loss`**   |
+| Hidden size          |                          `256` |                             `256` |
+| Batch size           |                          `512` |                             `512` |
+| Max epochs           |                          `200` |                             `200` |
+| MAGMa auxiliary loss |                             on |                                on |
+| Seed                 |                           `17` |                              `17` |
+| Decision threshold   |                    fixed `0.5` | selected on the validation split |
 
-## Important Distinction
+Everything except the objective is held fixed, so the difference between the two
+rows is attributable to the loss function alone.
 
-The `*_original_mist_config.yaml` files reproduce the improper MIST setting
-used in the Comment and are reported as `MIST in Comment`. They are
-**not** a faithful reimplementation of MIST. The differences are substantial:
-BCE loss instead of cosine loss, batch size `512` instead of `128`, and fewer
-training epochs (`200` versus `600` in the MISTv2 CANOPUS config). Our "Tuned
-MIST" is based on the MIST vFRIGID hyperparameter family while skipping the
-larger FRIGID workflow and ICEBERG augmentation. Therefore, the optimal
-parameters here are close to, but not identical to, the full FRIGID setting.
+## Why `val_monitor` Must Move With The Loss
 
-## How the Tuned MIST Parameters Were Selected
+The two changes are not independent. `val_monitor` selects both the early-stopping
+signal and the saved checkpoint. Under cosine training, `val_bce_loss` reaches its
+minimum at epoch 1 and never improves, so early stopping fires around epoch 20 and
+the epoch-1 checkpoint is the one kept. The run still exits 0 and still writes a
+plausible-looking score, which makes the failure easy to miss. Changing `loss_fn`
+without changing `val_monitor` therefore does not measure the cosine objective at
+all.
 
-Hyperparameter tuning was needed because the Comment changed enough of the MIST
-training setting that the original hyperparameters were no longer a safe
-default. The objective, training schedule, batch size, and data pipeline all
-differ from existing MIST-style runs. During the reproduction, we therefore kept
-the MIST architecture fixed and tuned only training hyperparameters on the open
-NPLIB1 and MassSpecGym random/scaffold settings.
+## The Decision Threshold Is Fitted, Not Assumed
 
-The search was intentionally small and directional. We started from the MIST
-vFRIGID-style setting: cosine loss, batch size `256`, maximum `150` epochs,
-maximum `10` peaks, EMA with decay `0.995`, cosine learning-rate schedule with
-warmup, and no data augmentation. We chose this starting point because it is the
-best-performing configuration family on the MassSpecGym official benchmark. We
-then compared it against the Comment-style BCE configuration and checked the
-main unstable choices observed during reproduction: BCE versus cosine loss, and
-larger hidden sizes (`640`, `1024`, and `2048`).
+Jaccard requires binarizing the predicted fingerprint, and the cut point is a free
+parameter. The original pipeline hard-coded it at `0.5`. Here it is chosen by
+`predict.py`, which sweeps a `0.02`-`0.98` grid on the **validation** split before
+the test split is scored. `test_performance.json` records the selected threshold,
+the validation Jaccard behind it, and `jaccard_at_0.5` so the calibration can be
+audited from the artifact.
 
-The final checked-in configurations are the most consistent setting from that
-sweep and are stored in `*_mist_config.yaml`. Directionally, they use a larger
-hidden size (`1024`), cosine loss, EMA, cosine schedule with warmup, batch size
-`256`, maximum `150` epochs, maximum `10` peaks, and no augmentation. MAGMa
-auxiliary supervision is also off in all tuned configs
-(`magma_aux_loss: False`). These are the only intended MIST training changes
-behind the `Tuned MIST` rows; they do not add contrastive fine-tuning, MAGMa
-supervision, or ICEBERG augmentation.
+The selected values differ sharply by objective, which is why a single fixed cut
+cannot serve both:
+
+| Split                | MIST in Comment (BCE) | Corrected MIST (cosine) |
+|----------------------|----------------------:|------------------------:|
+| NPLIB1 scaffold      |                  0.80 |                    0.16 |
+| NPLIB1 random        |                  0.82 |                    0.14 |
+| MassSpecGym scaffold |                  0.78 |                    0.12 |
+| MassSpecGym random   |                  0.84 |                    0.24 |
+
+A cosine-trained model evaluated at the fixed `0.5` cut scores 0.018 Jaccard on
+NPLIB1 scaffold and 0.317 at its validation-selected cut. Reporting the former
+would measure calibration, not fingerprint quality.
+
+## Reference: Official MISTv2
+
+For context, the MIST authors' own CANOPUS configuration
+([MIST repository](https://github.com/samgoldman97/mist/tree/main_v2#training))
+uses cosine loss, hidden size `256` or `512`, batch size `128`, up to `600`
+epochs, and `max_peaks: 15`. It is not checked in here because this reproduction
+deliberately holds the Comment's architecture and training budget fixed and
+varies only the objective; adopting the full upstream recipe would confound the
+loss change with a larger training budget.

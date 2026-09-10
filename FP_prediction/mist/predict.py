@@ -58,7 +58,7 @@ def get_datamodule(config):
     my_splitter = split_utils.get_splitter(**config["dataset"])
 
     # Update the config now.
-    # Upstream MIST vFRIGID has no "peakformula_test" featurizer; that key
+    # Upstream MIST has no "peakformula_test" featurizer; that key
     # existed only in a local MIST fork, as a subclass forcing
     # magma_aux_loss=False. Set the flag directly instead.
     config["dataset"]["spec_features"] = "peakformula"

@@ -84,12 +84,12 @@ if __name__ == "__main__":
     parser.add_argument(
         "--nn-dir",
         type=Path,
-        default=Path("results/nearest_neighbour/nn_sim/all_train_candidates"),
+        default=Path("results/nearest_neighbour/nn_sim/same_formula_candidates_fallback"),
     )
     parser.add_argument(
         "--dreams-dir",
         type=Path,
-        default=Path("results/nearest_neighbour/nn_sim_dreaMS/all_train_candidates"),
+        default=Path("results/nearest_neighbour/nn_sim_dreaMS/same_formula_candidates_fallback"),
     )
     parser.add_argument(
         "--output-dir",

@@ -207,7 +207,7 @@ def main():
             script = Path(assign_mod.__file__)
         except Exception as exc:  # pragma: no cover - depends on install layout
             raise SystemExit(
-                "Could not locate mist.subformulae.assign_subformulae; ensure MIST vFRIGID "
+                "Could not locate mist.subformulae.assign_subformulae; ensure upstream MIST "
                 f"is importable (see REPRODUCING_RESULTS.md section 1). Original error: {exc}"
             )
         cmd = [

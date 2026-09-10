@@ -77,15 +77,15 @@ def get_checkpoint_path(folder):
 
     return os.path.join(folder, best_checkpoint)
 
-def get_datamodule(config):
+def get_loader(config, which = "test"):
 
     # Split data (repo-side splitter: matches split names as strings)
     my_splitter = split_utils.get_splitter(**config["dataset"])
 
     # Update the config now.
     # Test-time featurization is plain "peakformula" with the MAGMa auxiliary
-    # target disabled. Upstream MIST vFRIGID exposes no "peakformula_test" key;
-    # that name only existed in a local MIST fork, where it was a thin subclass
+    # target disabled. Upstream MIST exposes no "peakformula_test" key; that
+    # name only existed in a local MIST fork, where it was a thin subclass
     # forcing magma_aux_loss=False. Setting the flag here keeps the same
     # behaviour without depending on a non-upstream featurizer registry entry.
     config["dataset"]["spec_features"] = "peakformula"
@@ -99,13 +99,14 @@ def get_datamodule(config):
     spectra_mol_pairs = datasets.get_paired_spectra(**config["dataset"])
     spectra_mol_pairs = list(zip(*spectra_mol_pairs))
 
-    # Get the test split 
-    _, (_, _, test) = my_splitter.get_splits(spectra_mol_pairs)
+    # Get the requested split
+    _, (_, val, test) = my_splitter.get_splits(spectra_mol_pairs)
+    split_data = {"val": val, "test": test}[which]
 
-    test_dataset = datasets.SpectraMolDataset(spectra_mol_list=test, featurizer=paired_featurizer, **config["train_settings"])
-    test_loader = datasets.SpecDataModule.get_paired_loader(test_dataset, shuffle=False)
+    dataset = datasets.SpectraMolDataset(spectra_mol_list=split_data, featurizer=paired_featurizer, **config["train_settings"])
+    loader = datasets.SpecDataModule.get_paired_loader(dataset, shuffle=False)
 
-    return test_loader
+    return loader
 
 def batch_to_device(batch: dict, device) -> None:
     
@@ -127,14 +128,40 @@ def update_config(args, config):
     return update_mist_config(args, config)
 
 @torch.no_grad()
+def sweep_threshold(model, config, device, grid = np.arange(0.02, 0.99, 0.02)):
+
+    """Pick the binarisation threshold that maximises Jaccard on the validation split."""
+
+    all_pred, all_GT = [], []
+
+    for spectra_batch in tqdm(get_loader(config, which = "val")):
+
+        FP = spectra_batch["mols"][:, :].to(float)
+        batch_to_device(spectra_batch, device)
+        all_pred.append(model.encode_spectra(spectra_batch)[0].to(float).cpu())
+        all_GT.append(FP)
+
+    FP_pred = torch.cat(all_pred, dim = 0).numpy()
+    FP = torch.cat(all_GT, dim = 0).numpy()
+
+    best_threshold, best_jaccard = 0.5, -1.0
+    for threshold in grid:
+        jaccard = batch_jaccard_index((FP_pred > threshold).astype(int), FP).mean()
+        if jaccard > best_jaccard:
+            best_jaccard, best_threshold = float(jaccard), float(threshold)
+
+    print(f"Validation-selected threshold: {best_threshold:.2f} (val jaccard {best_jaccard:.4f}, n={len(FP)})")
+    return best_threshold, best_jaccard, len(FP)
+
+@torch.no_grad()
 def predict(model, config, device, threshold = 0.5):
 
     # Get the dataset
-    test_loader = get_datamodule(config)
+    test_loader = get_loader(config, which = "test")
 
     # Run model predictions
     id_list, predictions, GT, losses, jaccard_scores = [], [], [], [], []
-    total_loss, total_jaccard, total = 0,0, 0
+    total_loss, total_jaccard, total_jaccard_half, total = 0,0,0,0
 
     for spectra_batch in tqdm(test_loader):
 
@@ -150,9 +177,11 @@ def predict(model, config, device, threshold = 0.5):
         loss = get_loss(FP_pred, FP)
         loss = loss.mean(-1)
         jaccard = batch_jaccard_index(to_binary(FP_pred, threshold), FP.numpy())
+        jaccard_half = batch_jaccard_index(to_binary(FP_pred, 0.5), FP.numpy())
 
         total_loss += loss.mean(-1).item() * FP_pred.size(0)
         total_jaccard += jaccard.sum()
+        total_jaccard_half += jaccard_half.sum()
         total += FP_pred.size(0)
 
         # Save the predctions 
@@ -171,9 +200,10 @@ def predict(model, config, device, threshold = 0.5):
     avg_loss = total_loss / total 
 
     # Get the average jaccard loss 
-    avg_jaccard = total_jaccard / total
+    avg_jaccard = float(total_jaccard / total)
+    avg_jaccard_half = float(total_jaccard_half / total)
 
-    return predictions, avg_loss, avg_jaccard
+    return predictions, float(avg_loss), avg_jaccard, avg_jaccard_half
 
 def main(args):
 
@@ -190,12 +220,16 @@ def main(args):
     model.to(args.device)
 
     # Get the predictions
-    predictions, loss, jaccard = predict(model, config, args.device)
+    threshold, val_jaccard, n_val = sweep_threshold(model, config, args.device)
+    predictions, loss, jaccard, jaccard_at_half = predict(model, config, args.device, threshold = threshold)
 
     # Write the predictions
     output_path = os.path.join(checkpoint_dir, "test_results.pkl")
     pickle_data(predictions, output_path)
-    write_json({"loss": loss, "jaccard": jaccard}, os.path.join(checkpoint_dir, "test_performance.json"))
+    write_json({"loss": loss, "jaccard": jaccard, "threshold": threshold,
+                "val_jaccard": val_jaccard, "n_val": n_val, "n_test": len(predictions),
+                "jaccard_at_0.5": jaccard_at_half},
+               os.path.join(checkpoint_dir, "test_performance.json"))
 
 if __name__ == "__main__":
 

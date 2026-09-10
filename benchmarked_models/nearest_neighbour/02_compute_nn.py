@@ -11,6 +11,7 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(REPO_ROOT))
 
 from benchmarked_models.common.benchmark_utils import (  # noqa: E402
+    FALLBACK_TO_ALL_TRAIN_POLICIES,
     SKIP_MISSING_FORMULA_POLICIES,
     VALID_CANDIDATE_POLICIES,
     cosine_top1,
@@ -158,28 +159,35 @@ def compute_nn_records(
         test_formula = formula_info.get(spec_id)
         test_fp = fp_info.get(spec_id)
         cand_idx = formula_to_candidates.get(test_formula, np.asarray([], dtype=int))
+        used_fallback = False
         if len(cand_idx) == 0:
             if candidate_policy in SKIP_MISSING_FORMULA_POLICIES:
                 continue
-            records.append(
-                {
-                    "dataset": dataset,
-                    "split": split,
-                    "method": "binned_spectrum_nn",
-                    "candidate_policy": candidate_policy,
-                    "spec_id": spec_id,
-                    "top_train_id": None,
-                    "has_candidate": False,
-                    "similarity": None,
-                    "formula": test_formula,
-                    "target_fp": test_fp.tolist() if test_fp is not None else None,
-                    "pred_fp": None,
-                    "jaccard": None,
-                    "inchikey": inchikey_info.get(spec_id),
-                    "smiles": smiles_info.get(spec_id),
-                }
-            )
-            continue
+            if candidate_policy in FALLBACK_TO_ALL_TRAIN_POLICIES:
+                # Formula-first, but never drop the query: fall back to the
+                # whole training set so this spectrum still gets a prediction.
+                cand_idx = np.arange(len(train_ids), dtype=int)
+                used_fallback = True
+            else:
+                records.append(
+                    {
+                        "dataset": dataset,
+                        "split": split,
+                        "method": "binned_spectrum_nn",
+                        "candidate_policy": candidate_policy,
+                        "spec_id": spec_id,
+                        "top_train_id": None,
+                        "has_candidate": False,
+                        "similarity": None,
+                        "formula": test_formula,
+                        "target_fp": test_fp.tolist() if test_fp is not None else None,
+                        "pred_fp": None,
+                        "jaccard": None,
+                        "inchikey": inchikey_info.get(spec_id),
+                        "smiles": smiles_info.get(spec_id),
+                    }
+                )
+                continue
 
         local_idx, similarity = cosine_top1(ms_info[spec_id], train_ms[cand_idx])
         train_idx = int(cand_idx[local_idx])
@@ -194,6 +202,7 @@ def compute_nn_records(
                 "spec_id": spec_id,
                 "top_train_id": top_train_id,
                 "has_candidate": True,
+                "used_fallback": used_fallback,
                 "similarity": similarity,
                 "formula": test_formula,
                 "target_fp": test_fp.tolist(),
@@ -383,6 +392,6 @@ if __name__ == "__main__":
     parser.add_argument(
         "--candidate-policy",
         choices=sorted(VALID_CANDIDATE_POLICIES),
-        default="all_train_candidates",
+        default="same_formula_candidates_fallback",
     )
     main(parser.parse_args())

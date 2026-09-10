@@ -1,6 +1,6 @@
-"""Repository-side split handling for MIST vFRIGID.
+"""Repository-side split handling for MIST split files.
 
-MIST vFRIGID's ``PresetSpectraSplitter`` reads the split TSV with a bare
+Upstream MIST's ``PresetSpectraSplitter`` reads the split TSV with a bare
 ``pd.read_csv``, so pandas infers column dtypes. NPLIB1 spectrum names are
 purely numeric strings (``4745``, ``15289``, ...) and become ``int64``, while
 the spectrum names produced by ``Spectra.get_spec_name()`` are always ``str``.

@@ -1,0 +1,77 @@
+project: LS
+seed: 17
+
+data:
+  dataset: "massspecgym"
+  data_folder: "/path/to/MS_processing/data/"
+  splits_folder: "/path/to/MS_processing/data_splits/"
+  split_file: "inchikey_vanilla.json" # Could just use any placeholder
+  batch_size: 1024
+  num_workers: 4
+  bin_resolution: 0.25
+  max_da: 2000
+  max_MS_peaks: 30
+  FP_type: "morgan4_4096"
+  intensity_type: "raw"
+  intensity_threshold: 5.0
+  considered_atoms: ["C", "H", "O", "N", "S", "Cl", "Br", "F", "P", "I", "K", "Si", "Na", "Sn"]
+  n_frag_candidates: 5
+  chemberta_model: "/path/to/ML_MS_analysis/pretrained_models/ChemBERTa-zinc-base-v1"
+
+train_params:
+  learning_rate: 0.00075
+  weight_decay: 0.00005
+  pos_weight: 5.0
+  reconstruction_weight: 0
+  name: "Adam"
+  n_outer_loops: 500
+
+model:
+  name: "binned_MS_encoder" # Choices are: binned_MS_encoder, MS_encoder, formula_encoder
+
+  feats_params: 
+    include_adduct: True 
+    include_CE: False
+    include_instrument: True 
+
+  binned_MS_encoder:
+    model_dim: 512
+    hidden_dim: 2048
+    dropout_rate: 0.10
+
+  MS_encoder:
+    n_heads: 8
+    n_layers: 6
+    model_dim: 512
+    hidden_dim: 2048
+    dropout_rate: 0.10
+
+splitter:
+  patience: 20
+  num_batches: 500
+  w_gap: 1.0
+  w_ratio: 1.0
+  w_balance: 1.0
+  train_ratio: 0.8
+  clip_grad_norm: 0
+  monitor: "splitter/loss"
+  every_n_epochs: 10 
+  jaccard_threshold: 0.85
+
+splitter_trainer:
+  max_epochs: 100
+  limit_val_batches: 0
+  gradient_clip_val: 5 
+  devices: 2
+
+trainer:
+  max_epochs: 100
+  devices: 2
+  accelerator: "gpu"
+  log_every_n_steps: 5
+
+callbacks:
+  patience: 2
+  monitor: "val_FP_loss"
+
+

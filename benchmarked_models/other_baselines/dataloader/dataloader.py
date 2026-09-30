@@ -1,0 +1,305 @@
+import os
+import numpy as np
+from typing import Any, Callable, List
+
+import torch
+import pytorch_lightning as pl
+from transformers import AutoTokenizer
+from torch.utils.data import DataLoader
+
+from utils import load_pickle, load_json, \
+                  bin_MS, sort_intensities, pad_mz_intensities, \
+                  process_formula, filter_candidates, pad_missing_cand, pad_missing_cand_weight, \
+                  tokenize_frags, parse_adduct_contents
+
+class Data(object):
+
+    def __init__(self, data: Any, process: Callable):
+        self.data = data
+        self.process = process
+
+    def __getitem__(self, index: int) -> Any:
+        return self.process(self.data[index])
+
+    def __len__(self) -> int:
+        return len(self.data)
+    
+class MSDataset(pl.LightningDataModule):
+
+    def __init__(self, dir: str, 
+                       split_file: str = "",
+                       adduct_file: str = "",
+                       instrument_file: str = "",
+                       batch_size: int = 32,
+                       num_workers: int = 0,
+                       pin_memory: bool = False,
+                       max_da: int = 1000,
+                       max_MS_peaks: int = 100,
+                       bin_resolution: float = 0.1, 
+                       FP_type: str = "morgan4_2048",
+                       intensity_type: str = "raw",
+                       intensity_threshold: float = 5.0,
+                       considered_atoms: List = ["C", "H", "O", "N"],
+                       n_frag_candidates: int = 5,
+                       chemberta_model: str = "",
+                       return_id_: bool = False,
+                       get_CF: bool = False,
+                       get_frags: bool = False):
+        
+        super().__init__()
+
+        self.dir = dir
+        self.batch_size = batch_size
+        self.num_workers = num_workers
+        self.pin_memory = pin_memory
+        self._train: List = []
+        self._val: List = []
+        self._test: List = []
+        self._data: List = []
+        self.bin_resolution = bin_resolution
+        self.max_da = max_da
+        self.max_MS_peaks = max_MS_peaks
+        self.FP_type = FP_type
+        self.intensity_type = intensity_type
+        self.intensity_threshold = intensity_threshold
+        self.considered_atoms = considered_atoms
+        self.n_frag_candidates = n_frag_candidates
+        self.return_id_ = return_id_
+        self.get_CF = get_CF
+        self.get_frags = get_frags
+
+        # Get the splits 
+        splits = load_json(split_file)
+
+        # Get the adducts and instruments 
+        self.adducts = load_pickle(adduct_file)
+        self.instruments = load_pickle(instrument_file)
+
+        # Get the data 
+        train = [os.path.join(dir, f) for f in splits["train"]]
+        val = [os.path.join(dir, f) for f in splits["val"]]
+        test = [os.path.join(dir, f) for f in splits["test"]]
+
+        # Prepare splits
+        self._data = train + val + test
+        self._train = train
+        self._val = val
+        self._test = test
+
+        print("Train length: ", len(self._train))
+        print("Val length: ", len(self._val))
+        print("Test length: ", len(self._test))
+
+        # Load in the tokenizer 
+        self.tokenizer = None
+        if self.get_frags:           
+            self.tokenizer = AutoTokenizer.from_pretrained(chemberta_model)
+    
+    @property 
+    def data(self) -> List: 
+        """The entire dataset. """
+        return self._data 
+    
+    @property
+    def train_data(self) -> List:
+        """The Training data."""
+        return self._train
+
+    @property
+    def val_data(self) -> List:
+        """The validation data."""
+        return self._val
+
+    @property
+    def test_data(self) -> List:
+        """The testing data."""
+        return self._test
+
+    def set_train_data(self, train):
+        self._train = train
+    
+    def set_val_data(self, val):
+        self._val = val 
+
+    def set_test_data(self, test):
+        self._test = test 
+
+    def prepare_data(self):
+        """Only happens on single GPU, ATTENTION: do no assign states."""
+        pass
+
+    def setup(self, stage: str = None):
+        """Prepares the data for training, validation, and testing."""
+        pass
+
+    def _process_intensity(self, intensities_o):
+
+        """Prepares the intensity vector"""
+
+        if self.intensity_type == "raw": 
+            return intensities_o
+        
+        elif self.intensity_type == "binary":
+            return [float(i > 0.0) for i in intensities_o]
+
+        elif self.intensity_type == "raw_threshold":
+            return [i if i >= self.intensity_threshold else 0.0 for i in intensities_o]
+
+        elif self.intensity_type == "binary_threshold":     
+             return [float(i > self.intensity_threshold) for i in intensities_o]
+        
+        else:
+            raise Exception(f"{self.intensity_type} not supported.")
+
+    def _process_energy(self, energy):
+        
+        try:
+            energy = float(energy)
+        except:
+            return 9 # not a float 
+        
+        # Give 5 different energy bins
+        if energy < 30: return 0 
+        elif energy < 45: return 1 
+        elif energy < 60: return 2
+        elif energy < 75: return 3 
+        elif energy < 90: return 4
+        elif energy < 105: return 5 
+        elif energy < 120: return 6 
+        elif energy < 135: return 7 
+        elif energy < 150: return 8 
+        else: return 9 
+
+    def process(self, filepath: Any) -> Any:
+
+        """Processes a single data sample"""
+        sample = load_pickle(filepath)
+
+        # Get the id_ 
+        id_ = sample["id_"]
+
+        # Model some meta information like adduct, CE and instrument
+        adduct = self.adducts[sample["precursor_type"]]
+        CE = self._process_energy(sample["collision_energy"])
+        instrument = self.instruments[sample["instrument_type"]]
+
+        # Get the mz and intensities
+        peaks = sample["peaks"]
+        mz_o = [float(p["mz"]) for p in peaks]
+        intensities_o = [float(p["intensity_norm"]) for p in peaks]
+
+        # Add in the precursor_mz in the list of peaks 
+        mz_o = [float(sample["precursor_MZ_final"])] + mz_o
+        intensities_o = [100.1] + intensities_o # So that the precursor peak is always at the front
+        intensities_o = self._process_intensity(intensities_o) # Process the intensity differently
+
+        formula_o, frags_o = None, None
+
+        # Get the chemical formula if self.get_CF == True
+        if self.get_CF:
+
+            if "nist2023" in self.dir:
+                formula_o = [sample["formula"]] + [p["comment"]["f"] for p in peaks]
+
+            else:
+                formula_o = [sample["formula"]] + [p["comment"]["f_pred"] for p in peaks]
+
+        # Get possible frags if self.get_frags == True
+        if self.get_frags:
+            
+            frags_o = [(pad_missing_cand(self.n_frag_candidates), pad_missing_cand_weight(self.n_frag_candidates))] + \
+                      [filter_candidates(p["comment"]["possible_frags"], self.n_frag_candidates) for p in peaks]
+
+        # Sanity check 
+        if len(mz_o) != len(intensities_o):
+            raise Exception(f"Lengths do not match. mz: {len(mz_o)}, intensity: {len(intensities_o)}")
+        if formula_o is not None and len(mz_o) != len(formula_o):
+            raise Exception(f"Lengths do not match. mz: {len(mz_o)}, formula: {len(formula_o)}")
+        if frags_o is not None and len(mz_o) != len(frags_o):
+            raise Exception(f"Lengths do not match. mz: {len(mz_o)}, frags: {len(frags_o)}")
+
+        # Sort the MZ, intensities, formula and frags
+        mz, intensities, formula, frags_smiles, frags_weight = sort_intensities(mz_o, intensities_o, formula_o, frags_o)
+
+        # Get the binned MS 
+        binned_MS = bin_MS(mz, intensities, self.bin_resolution, self.max_da)
+
+        # Get subset of the peaks for transformer network 
+        mz = mz[:self.max_MS_peaks]
+        intensities = intensities[:self.max_MS_peaks]
+        if formula is not None: formula = formula[:self.max_MS_peaks]
+        if frags_smiles is not None: frags_smiles = frags_smiles[:self.max_MS_peaks]
+        if frags_weight is not None: frags_weight = frags_weight[:self.max_MS_peaks]
+        pad_length = self.max_MS_peaks - len(mz)
+
+        output = pad_mz_intensities(mz, intensities, formula, frags_smiles, frags_weight, 
+                                    pad_length, n_cands = self.n_frag_candidates)
+        
+        mz, intensities, formula, frags_smiles, frags_weight, mask = output
+
+        # Skip processing some records
+        if sum(mask) == len(mask):
+            raise Exception(f"All the peaks for record: {id_} are masked out")
+        
+        if sum(binned_MS) == 0.0:
+            raise Exception(f"All the bins for record: {id_} are 0")
+        
+        # Process the formula 
+        if formula is not None: formula = [process_formula(f, self.considered_atoms) for f in formula]
+
+        # Process the fragments 
+        frags_tokens, frags_mask = None, None
+        if frags_smiles is not None: 
+            assert frags_weight is not None 
+            frags_tokens, frags_mask = tokenize_frags(frags_smiles, self.tokenizer, n_cands = self.n_frag_candidates)
+    
+        # Get the FP
+        FP = [float(c) for c in sample["FPs"][self.FP_type]]
+
+        rec = {"mz": torch.tensor(mz, dtype=torch.float),
+               "intensities": torch.tensor(intensities, dtype=torch.float),
+               "mask": torch.tensor(mask, dtype=torch.bool),
+               "binned_MS": torch.tensor(binned_MS, dtype = torch.float),
+               "FP": torch.tensor(FP, dtype = torch.float),
+               "adduct": torch.tensor(adduct, dtype=torch.int),
+               "CE": torch.tensor(CE, dtype=torch.int),
+               "instrument": torch.tensor(instrument, dtype=torch.int)}
+
+        if self.return_id_: rec["id_"] = id_
+        if formula is not None: rec["formula"] = torch.tensor(formula, dtype=torch.float)
+        if frags_tokens is not None: rec["frags_tokens"] = frags_tokens
+        if frags_mask is not None: rec["frags_mask"] = frags_mask
+        if frags_weight is not None: rec["frags_weight"] = torch.tensor(frags_weight, dtype = torch.float)
+
+        return rec 
+    
+    def train_dataloader(self):
+        train_data = Data(self.train_data, self.process)
+        train_data_loader = DataLoader(train_data,
+                                        num_workers = self.num_workers,
+                                        pin_memory = self.pin_memory,
+                                        batch_size = self.batch_size,
+                                        shuffle=True)
+
+        return train_data_loader
+
+    def val_dataloader(self):
+        val_data = Data(self.val_data, self.process)
+        val_data_loader = DataLoader(val_data,
+                                    num_workers = self.num_workers,
+                                    pin_memory = self.pin_memory,
+                                    batch_size = self.batch_size,
+                                    shuffle=False)
+
+        return val_data_loader
+
+    def test_dataloader(self):
+        test_data = Data(self.test_data, self.process)
+        test_data_loader = DataLoader(test_data,
+                                    num_workers = self.num_workers,
+                                    pin_memory = self.pin_memory,
+                                    batch_size = self.batch_size,
+                                    shuffle=False)
+
+        return test_data_loader
+

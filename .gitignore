@@ -1,0 +1,28 @@
+# Data and results are distributed separately (see README)
+data/
+results/
+figures/*.pdf
+
+# Large experiment outputs inside the model folders
+benchmarked_models/*/results*/
+benchmarked_models/*/best_models/
+benchmarked_models/*/best_ls_results/
+benchmarked_models/*/FT_results/
+benchmarked_models/*/influence_results/
+benchmarked_models/*/ls_results/
+benchmarked_models/*/wandb/
+benchmarked_models/*/cache/
+pretrained_models/
+
+# Python
+__pycache__/
+*.pyc
+*.egg-info/
+.ipynb_checkpoints/
+
+# Local quarantine folder for files pulled out of the working copy; never committed
+to_delete/
+
+# Local tooling
+.claude/
+Screenshot*.png

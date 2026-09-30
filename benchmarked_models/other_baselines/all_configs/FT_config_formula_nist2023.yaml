@@ -1,0 +1,26 @@
+project: FP_baselines_FT
+seed: 37
+
+data:
+  dataset: "nist2023"
+  data_folder: "/path/to/MS_processing/data/"
+  splits_folder: "/path/to/MS_processing/data_splits/"
+  batch_size: 1024
+  num_workers: 4
+
+model:
+  name: "formula_encoder" # Choices are: binned_MS_encoder, MS_encoder, formula_encoder
+  results_dir: "/path/to/ML_MS_analysis/FP_prediction/baseline_models/best_models"
+
+trainer:
+  max_epochs: 180
+  devices: 2
+  accelerator: "gpu"
+  log_every_n_steps: 10
+  gradient_clip_val: 1.0
+  
+callbacks:
+  patience: 50
+  monitor: "val_FP_loss"
+
+

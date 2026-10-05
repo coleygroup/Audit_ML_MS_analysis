@@ -22,8 +22,8 @@ two effects can be separated:
 - `*_original_mist_e600_config.yaml`: **the headline configuration.** The
   Comment's own BCE objective at the 600-epoch budget, scored from `last.ckpt`.
   This is the `MIST in Comment, final checkpoint` row. It is the headline because
-  it changes nothing about the Comment's model or objective -- only the epoch
-  budget and which checkpoint is read -- and it isolates how much of the published
+  it changes nothing about the Comment's model or objective — only the epoch
+  budget and which checkpoint is read — and it isolates how much of the published
   shortfall is checkpoint selection rather than the objective.
 - `*_mist_config.yaml`: the cosine objective under the Comment's original 200-epoch
   budget and loss-selected checkpoint. Retained for reference; it was the headline
@@ -61,7 +61,7 @@ row:
 | Decision threshold   |                    fixed `0.5` | fitted on validation        |      fitted on validation |                  fitted on validation |
 
 `*_mist_e600_config.yaml` and `*_original_mist_e600_config.yaml` differ in exactly
-three lines -- `exp_name`, `loss_fn` and `val_monitor` -- so the difference between
+three lines — `exp_name`, `loss_fn` and `val_monitor` — so the difference between
 those two columns is attributable to the objective alone. `Tuned MIST` changes
 width, schedule and checkpoint rule together and is reported as an aggregate, not
 as an attribution of any single knob. Its effective batch size matches the other
@@ -127,8 +127,8 @@ How much the fitted threshold is worth depends strongly on how long the model
 trained. The 200-epoch, loss-selected cosine run was severely miscalibrated: it
 scored 0.018 Jaccard at `0.5` on NPLIB1 scaffold against 0.317 at its fitted cut.
 The same configuration at 600 epochs, read at the final checkpoint, scores 0.298 at
-`0.5` and 0.330 at its fitted cut. The fitted cut is still worth having -- and under
-BCE it remains worth +0.010 to +0.030 -- but most of what it appeared to recover
+`0.5` and 0.330 at its fitted cut. The fitted cut is still worth having — and under
+BCE it remains worth +0.010 to +0.030 — but most of what it appeared to recover
 earlier was an artifact of stopping training early. Comparing models trained under
 different objectives at a shared fixed threshold still measures calibration as
 much as fingerprint quality.

@@ -18,12 +18,12 @@ The `MIST, default objective` row changes exactly one thing about the Comment's 
 with MIST's default cosine objective instead of BCE, with `val_monitor` moved to
 match (without which the cosine run silently keeps its epoch-1 checkpoint).
 Architecture, batch size, seed and MAGMa auxiliary supervision are unchanged, and
-no fork of MIST is involved -- every row runs against unmodified upstream MIST
+no fork of MIST is involved — every row runs against unmodified upstream MIST
 from the [`main_v2` branch](https://github.com/samgoldman97/mist/tree/main_v2).
 
 Two **evaluation** choices separate the corrected rows from the published ones, and
 they account for most of the difference between them. Neither touches the model, so
-both can be -- and in the headline table are -- applied to the Comment's own
+both can be — and in the headline table are — applied to the Comment's own
 configuration and objective as well:
 
 1. The epoch budget is raised to 600 and the score is read from the **final**
@@ -66,7 +66,7 @@ scaffold), and reading epoch 600 instead is worth +0.011 and +0.010 rather than
 Two consequences follow. First, **raising the epoch budget alone does almost
 nothing, because the monitor discards the extra epochs.** On NPLIB1 random, going
 from a 200- to a 600-epoch budget moves the loss-selected score from 0.638 to
-0.636 -- unchanged within run-to-run variation -- while reading the final
+0.636 — unchanged within run-to-run variation — while reading the final
 checkpoint of that same 600-epoch run gives 0.743. Second, because this is a
 checkpoint-selection effect and not a tuning effect, **it requires no
 hyperparameter search**: it is a change to which file is loaded at evaluation
@@ -221,7 +221,7 @@ of test structures are already present in training and the retrieval ceiling is
 0.972; DreaMS nearest neighbour reaches 0.944, within 0.028 of a ceiling that
 exists only because the answers are in the training set. On the scaffold splits
 that ceiling falls to 0.435 and 0.489, and MIST exceeds every nearest-neighbour
-variant -- on MassSpecGym scaffold it also exceeds 75% of the retrieval ceiling
+variant — on MassSpecGym scaffold it also exceeds 75% of the retrieval ceiling
 while both NN baselines fall well short of it.
 
 The same picture holds on the favourable subset the formula-filtered code
@@ -240,8 +240,8 @@ actually scores, where leakage is even more extreme on the random splits:
 
 On NPLIB1 scaffold, MIST **exceeds the nearest-neighbour ceiling** (0.359
 versus 0.326), which a retrieval method cannot do by construction. On MassSpecGym
-scaffold it reaches 0.498 against a ceiling of 0.516 -- 96% of the best score any
-retrieval-only method could achieve -- and leads both nearest-neighbour variants on
+scaffold it reaches 0.498 against a ceiling of 0.516 — 96% of the best score any
+retrieval-only method could achieve — and leads both nearest-neighbour variants on
 this subset, which it did not in revisions of this file before 20261003. On the
 random subsets every method including the ceiling is compressed into a narrow high
 band, because 78% and 98% of those spectra have their own structure in the training

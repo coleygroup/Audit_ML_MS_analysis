@@ -12,8 +12,8 @@ Notes as of 10/05/2026:
 
 Five issues change the interpretation of the Comment's benchmark:
 
-- **The nearest-neighbour rows are not full-test scores.** They skip test entries without a same-formula training candidate through [this line of code](https://github.com/serenaklm/ML_MS_analysis/blob/1f88b9eab2656eb75c5915bf6ae4575848b44fe7/benchmarked_models/nearest_neighbour/02_compute_nn.py#L128) / [snapshot](https://github.com/coleygroup/Audit_ML_MS_analysis/blob/1f88b9eab2656eb75c5915bf6ae4575848b44fe7/benchmarked_models/nearest_neighbour/02_compute_nn.py#L128), discarding as much as 62% of some splits, while MIST is evaluated on the full test set. The discarded entries are the hard ones -- molecules whose formula was never seen in training -- so the reported score is not a full-test baseline. Restoring a common denominator removes the advantage of the machine-learning-free nearest neighbour on both scaffold splits, where MIST's published configuration then leads it (Table 1). The advantage survives on the two random splits, for reasons covered below.
-- **The MIST models are under-trained, because the metric used to select them is not the metric being reported.** The Comment selects the MIST checkpoint by validation BCE loss but reports Jaccard after binarization. On the scaffold splits the loss stops improving within a handful of epochs while Jaccard keeps rising, so the reported model is an **epoch-10 (NPLIB1) and epoch-5 (MassSpecGym)** checkpoint. The predicted fingerprint is also binarized at a hard-coded `0.5` rather than at a fitted cut point; see the [MIST configuration comparison](benchmarked_models/mist/all_configs/README.md). Fixing only these two evaluation choices -- fitting the threshold on validation and taking the final checkpoint -- and changing **nothing about the Comment's model or objective**, raises MIST by **+0.086 and +0.101 Jaccard** on the two scaffold splits -- the single largest correction in this report. With every improvement applied to both sides (Table 2), MIST leads the tuned nearest-neighbour baselines on NPLIB1 scaffold by 0.018 and is level with them on MassSpecGym scaffold, while they remain ahead on the two random splits.
+- **The nearest-neighbour rows are not full-test scores.** They skip test entries without a same-formula training candidate through [this line of code](https://github.com/serenaklm/ML_MS_analysis/blob/1f88b9eab2656eb75c5915bf6ae4575848b44fe7/benchmarked_models/nearest_neighbour/02_compute_nn.py#L128) / [snapshot](https://github.com/coleygroup/Audit_ML_MS_analysis/blob/1f88b9eab2656eb75c5915bf6ae4575848b44fe7/benchmarked_models/nearest_neighbour/02_compute_nn.py#L128), discarding as much as 62% of some splits, while MIST is evaluated on the full test set. The discarded entries are the hard ones — molecules whose formula was never seen in training — so the reported score is not a full-test baseline. Restoring a common denominator removes the advantage of the machine-learning-free nearest neighbour on both scaffold splits, where MIST's published configuration then leads it (Table 1). The advantage survives on the two random splits, for reasons covered below.
+- **The MIST models are under-trained, because the metric used to select them is not the metric being reported.** The Comment selects the MIST checkpoint by validation BCE loss but reports Jaccard after binarization. On the scaffold splits the loss stops improving within a handful of epochs while Jaccard keeps rising, so the reported model is an **epoch-10 (NPLIB1) and epoch-5 (MassSpecGym)** checkpoint. The predicted fingerprint is also binarized at a hard-coded `0.5` rather than at a fitted cut point; see the [MIST configuration comparison](benchmarked_models/mist/all_configs/README.md). Fixing only these two evaluation choices — fitting the threshold on validation and taking the final checkpoint — and changing **nothing about the Comment's model or objective**, raises MIST by **+0.086 and +0.101 Jaccard** on the two scaffold splits — the single largest correction in this report. With every improvement applied to both sides (Table 2), MIST leads the tuned nearest-neighbour baselines on NPLIB1 scaffold by 0.018 and is level with them on MassSpecGym scaffold, while they remain ahead on the two random splits.
 - **Fingerprint Jaccard is not the whole task.** Fingerprint Jaccard, the only metric benchmarked in the Comment, is not the standard endpoint for structure annotation. The practical task is to rank candidate molecules, usually by comparing predicted and candidate fingerprints with cosine similarity. Under candidate retrieval, MIST outperforms both nearest-neighbour baselines on **all four** dataset/split settings and at every reported cut-off, including MassSpecGym random, where it trails on binary Jaccard.
 - **Train-test overlap explains the random splits, where nearest neighbour still wins.** On the full test sets, **62.9%** of NPLIB1 random and **95.3%** of MassSpecGym random test structures already appear in training by 2D InChIKey, against **1.6%** and **14.3%** on the scaffold splits. Retrieving a training fingerprint is close to a lookup in that regime: the nearest-neighbour upper bound reaches 0.972 Jaccard on MassSpecGym random and falls to 0.489 on its scaffold split. The random-to-scaffold drop the Comment attributes to [DreaMS](https://www.nature.com/articles/s41587-025-02663-3) generalizing poorly is therefore better read as a property of the split, and it is also where nearest neighbour retains an advantage over MIST.
 - **Recent model development and standard benchmarks are not represented.** On the official MassSpecGym retrieval benchmark, a standard setting for method development, nearest neighbour does not dominate recent learned methods. Forward simulation and MIST-style models improve substantially when trained with better data, but these advances are not reflected in the Comment's benchmark.
@@ -64,7 +64,7 @@ query.
 
 After fixing the denominator, MIST already outperforms machine-learning-free NN
 baseline on both scaffold splits (0.238 against 0.212, 0.270 against 0.256), and
-DreaMS NN -- itself a machine-learning method -- is ahead of both on every split.
+DreaMS NN — itself a machine-learning method — is ahead of both on every split.
 Correcting the denominator alone therefore removes the headline result the
 Comment's table rests on, without yet improving either method.
 
@@ -88,9 +88,9 @@ This the only *model* change in this repository, and distinguishes the `MIST, de
 Each side now gets its best available configuration. Nearest neighbour gets the
 sub-formula fallback introduced in the authors' newly released code, whose four
 hyperparameters `(w, alpha, T, k)` are selected over a 1,080-point grid on the
-validation split. MIST gets the two evaluation fixes of this report -- a
+validation split. MIST gets the two evaluation fixes of this report — a
 validation-fitted binarization threshold and the final checkpoint of a 600-epoch
-budget -- plus MIST's own default cosine objective.
+budget — plus MIST's own default cosine objective.
 
 | Dataset     | Model                                      | Scaffold Jaccard (↑) |   Random Jaccard (↑) |
 | ----------- | ------------------------------------------ | -------------------: | -------------------: |
@@ -115,7 +115,7 @@ Returning a memorized training fingerprint is close
 to a lookup rather than a prediction in that regime, and the nearest-neighbour
 upper bound reaches 0.972 Jaccard on MassSpecGym random. It is also worth noting
 that DreaMS NN, which is itself built on a machine-learning embedding, outperforms
-the vanilla nearest neighbour on every split in both tables -- a result that does
+the vanilla nearest neighbour on every split in both tables — a result that does
 not support the general claim that machine learning does not work here.
 
 The checkpoint-selection analysis behind the ladder above, together with additional
@@ -157,15 +157,15 @@ five- and ten-epoch checkpoints.
 
 On the denominator fix alone, MIST's published configuration already leads the
 machine-learning-free nearest neighbour on both scaffold splits. With every
-improvement applied to both sides -- including the authors' own sub-formula
-fallback, whose four hyperparameters are selected on validation -- MIST leads on
+improvement applied to both sides — including the authors' own sub-formula
+fallback, whose four hyperparameters are selected on validation — MIST leads on
 NPLIB1 scaffold by 0.018 and is level on MassSpecGym scaffold, within the
 run-to-run spread. Nearest neighbour remains ahead on the two random splits, by
 0.025 and 0.088, and those are the splits carrying 62.9% and 95.3% exact
 structural overlap between test and training data, where the nearest-neighbour
 upper bound reaches 0.972 Jaccard; that regime measures retrieval of memorized
-structures more than prediction. Throughout, DreaMS NN -- a method built on a
-machine-learning embedding -- outperforms the vanilla nearest neighbour on every
+structures more than prediction. Throughout, DreaMS NN — a method built on a
+machine-learning embedding — outperforms the vanilla nearest neighbour on every
 split, a result that does not support the claim that machine learning fails. And
 under candidate retrieval, the endpoint that structure annotation actually uses,
 MIST is ahead on all four settings at every reported cut-off. The strong form of
@@ -228,7 +228,7 @@ results. Additional metric-specific caveats are documented in
 #### `Corrected MIST` renamed to `MIST, default objective`; the Comment's own run is now the headline
 
 A naming consequence of the 20261003 finding. The two corrections that carry the
-result -- the validation-fitted threshold and the final checkpoint -- are applied
+result — the validation-fitted threshold and the final checkpoint — are applied
 to every MIST row, including the Comment's own BCE configuration. The row
 previously called `Corrected MIST` is therefore not distinguished by a
 *correction* at all; it is distinguished by using MIST's default cosine
@@ -240,8 +240,8 @@ the loss function, which the matched-budget runs refuted.
   configuration notes and the table-building scripts. Earlier changelog entries
   keep the old name, since that is what the row was called at the time.
 - **`MIST in Comment, final checkpoint` is now the headline row.** It changes
-  nothing about the Comment's model or objective -- only the epoch budget and
-  which checkpoint is read -- and reaches 0.324 / 0.743 / 0.371 / 0.838. The
+  nothing about the Comment's model or objective — only the epoch budget and
+  which checkpoint is read — and reaches 0.324 / 0.743 / 0.371 / 0.838. The
   default-objective row is reported beside it rather than in place of it, because
   cosine is MIST's documented default and because it remains the best
   configuration we found on both scaffold splits (0.330 and 0.375).
@@ -257,15 +257,15 @@ The headline comparison is now staged, so that each table holds one kind of
 comparison rather than mixing them:
 
 - **Table 1** applies only the denominator fix. Every method is exactly as its
-  authors specified it -- MIST at its published `0.5` threshold and
+  authors specified it — MIST at its published `0.5` threshold and
   validation-loss-selected checkpoint, nearest neighbour with its formula-first
-  candidate policy -- and nothing is tuned on either side. MIST's published
+  candidate policy — and nothing is tuned on either side. MIST's published
   configuration leads the machine-learning-free nearest neighbour on both scaffold
   splits; DreaMS NN leads both on every split.
 - **Table 2** gives each side every improvement available to it. Nearest neighbour
   gets the sub-formula fallback from the authors' released code, whose four
   hyperparameters `(w, alpha, T, k)` are selected over a 1,080-point grid on the
-  validation split -- so it is a tuned method, not a parameter-free baseline. MIST
+  validation split — so it is a tuned method, not a parameter-free baseline. MIST
   gets the fitted threshold, the final checkpoint and its default objective. MIST
   leads NPLIB1 scaffold by 0.018 and is **level** on MassSpecGym scaffold (+0.004,
   inside the ±0.003 run-to-run spread); nearest neighbour leads the random splits
@@ -369,8 +369,8 @@ everything:
   0.473, while top-1 rises from 0.219 to 0.231). The checkpoint that maximizes
   thresholded Jaccard does not have the best-calibrated continuous output, and
   cosine and deep-ranking metrics depend on that calibration. We report one
-  checkpoint for all metrics -- the one that optimizes the metric the Comment
-  reports -- rather than selecting per metric, and record the trade-off here and in
+  checkpoint for all metrics — the one that optimizes the metric the Comment
+  reports — rather than selecting per metric, and record the trade-off here and in
   [DETAILED_RESULTS.md](DETAILED_RESULTS.md).
 - **The NPLIB1 nearest-neighbour and DreaMS retrieval rows have been corrected
   upward.** They predated the nearest-neighbour realignment in the 20260910 entry
@@ -392,7 +392,7 @@ the extra epochs unless the checkpoint rule is changed too.
 
 Adds `*_mist_e600_config.yaml`: `Corrected MIST` with `max_epochs: 600` and
 `patience` raised so early stopping cannot truncate the budget. Nothing else
-changes -- same `hidden_size: 256`, batch size, seed, objective and absence of an
+changes — same `hidden_size: 256`, batch size, seed, objective and absence of an
 LR schedule.
 
 Running it against the 200-epoch budget isolates the epoch effect: **+0.011 and

@@ -8,26 +8,89 @@ formula-filtered diagnostic tables.
 
 ## MIST Configuration Notes
 
-The main README reports three MIST rows: `MIST in Comment` at the original
-hard-coded `0.5` threshold, the same model at a validation-fitted threshold, and
-`Corrected MIST`. The configuration differences are documented in
+The main README reports four MIST rows: `MIST in Comment` at the original
+hard-coded `0.5` threshold, the same model at a validation-fitted threshold, the
+same model again at the final checkpoint of a 600-epoch budget, and `Corrected
+MIST`. The configuration differences are documented in
 [benchmarked_models/mist/all_configs/README.md](benchmarked_models/mist/all_configs/README.md).
 
-`Corrected MIST` is deliberately a **single-variable** change from the Comment's own
-configuration: same architecture, same batch size, same epoch budget, same seed,
-same MAGMa auxiliary supervision, trained with MIST's default cosine objective
-instead of BCE (with `val_monitor` moved to match, without which the cosine run
-silently keeps its epoch-1 checkpoint). It is not a separately tuned model
-family, and no fork of MIST is involved: both rows run against unmodified
-upstream MIST from the [`main_v2` branch](https://github.com/samgoldman97/mist/tree/main_v2).
+The `MIST, default objective` row changes exactly one thing about the Comment's **model**: it trains
+with MIST's default cosine objective instead of BCE, with `val_monitor` moved to
+match (without which the cosine run silently keeps its epoch-1 checkpoint).
+Architecture, batch size, seed and MAGMa auxiliary supervision are unchanged, and
+no fork of MIST is involved -- every row runs against unmodified upstream MIST
+from the [`main_v2` branch](https://github.com/samgoldman97/mist/tree/main_v2).
 
-Both rows also fit the fingerprint binarization threshold on the **validation**
-split rather than assuming `0.5`. This matters more than it might appear: the
-optimal cut is objective-dependent (0.78-0.84 under BCE, 0.12-0.24 under cosine),
-so a fixed `0.5` penalizes the cosine models specifically. Evaluated at `0.5`,
-`Corrected MIST` scores 0.018 on NPLIB1 scaffold; at its validation-selected cut it scores
-0.317. Any comparison across objectives at a shared fixed threshold is measuring
-calibration, not fingerprint quality.
+Two **evaluation** choices separate the corrected rows from the published ones, and
+they account for most of the difference between them. Neither touches the model, so
+both can be -- and in the headline table are -- applied to the Comment's own
+configuration and objective as well:
+
+1. The epoch budget is raised to 600 and the score is read from the **final**
+   checkpoint rather than the one the validation loss selects. The validation loss
+   and the reported Jaccard do not move together, and under the Comment's BCE
+   objective the monitor returns an epoch-5 (MassSpecGym scaffold) or epoch-10
+   (NPLIB1 scaffold) checkpoint. See
+   [Why the Published MIST Is Under-Trained](#why-the-published-mist-is-under-trained) below.
+2. The fingerprint binarization threshold is fitted on the **validation** split
+   rather than assumed to be `0.5`. The optimal cut is objective-dependent
+   (0.82-0.86 under BCE, 0.20-0.32 under cosine), so a fixed `0.5` does not treat
+   the two objectives alike.
+
+## Why the Published MIST Is Under-Trained
+
+The Comment's configuration selects the MIST checkpoint with
+`val_monitor: val_bce_loss` and reports mean Jaccard after binarizing the
+predicted fingerprint. Those two quantities do not move together. The validation
+loss flattens early while thresholded Jaccard keeps improving, so the checkpoint
+the monitor hands back is not the checkpoint that performs best on the metric
+being reported.
+
+Holding the Comment's configuration fixed, including its BCE objective, and
+changing only which epoch of the same 600-epoch run is read out:
+
+| Dataset     | Split    | Epoch the monitor selects | Jaccard there | Jaccard at epoch 600 |          Δ |
+| ----------- | -------- | ------------------------: | ------------: | -------------------: | ---------: |
+| MassSpecGym | scaffold |               **epoch 5** |         0.325 |                0.371 | **+0.046** |
+| NPLIB1      | scaffold |              **epoch 10** |         0.295 |                0.324 | **+0.029** |
+| NPLIB1      | random   |                  epoch 45 |         0.636 |                0.743 | **+0.107** |
+| MassSpecGym | random   |                 epoch 526 |         0.835 |                0.838 |     +0.003 |
+
+On the two splits that actually test generalization, the MIST row in the Comment is
+a five-epoch and a ten-epoch model. The same effect exists under MIST's default
+cosine objective but is weaker, because `val_cos_loss` tracks the reported
+metric better: it selects epoch 18 (MassSpecGym scaffold) and epoch 41 (NPLIB1
+scaffold), and reading epoch 600 instead is worth +0.011 and +0.010 rather than
++0.046 and +0.029.
+
+Two consequences follow. First, **raising the epoch budget alone does almost
+nothing, because the monitor discards the extra epochs.** On NPLIB1 random, going
+from a 200- to a 600-epoch budget moves the loss-selected score from 0.638 to
+0.636 -- unchanged within run-to-run variation -- while reading the final
+checkpoint of that same 600-epoch run gives 0.743. Second, because this is a
+checkpoint-selection effect and not a tuning effect, **it requires no
+hyperparameter search**: it is a change to which file is loaded at evaluation
+time.
+
+### The epoch at which validation plateaus tracks leakage
+
+Which epoch the monitor settles on is not arbitrary. It orders with how much of
+the test set is already present in training:
+
+| Dataset     | Split    | Test structures already in training | Monitor plateaus (BCE) | Monitor plateaus (cosine) |
+| ----------- | -------- | ----------------------------------: | ---------------------: | ------------------------: |
+| NPLIB1      | scaffold |                                1.6% |               epoch 10 |                  epoch 41 |
+| MassSpecGym | scaffold |                               14.3% |                epoch 5 |                  epoch 18 |
+| NPLIB1      | random   |                               62.9% |               epoch 45 |                 epoch 567 |
+| MassSpecGym | random   |                               95.3% |              epoch 526 |                 epoch 595 |
+
+On the scaffold splits the model has extracted what it can within a few dozen
+epochs. On the random splits validation keeps improving almost to the end of a
+600-epoch budget. A split on which a model never stops benefiting from more
+gradient steps over data it has already seen is a split that rewards
+memorization, and these are exactly the splits where 62.9% and 95.3% of test
+structures are already in the training set.
+
 
 ## Fingerprint Cosine and Candidate Retrieval
 
@@ -44,20 +107,31 @@ model's training objectives.
 | Dataset | Model | Scaffold FP cosine (↑) | Random FP cosine (↑) |
 | ----------- | ------------------ | ---------------------: | -------------------: |
 | NPLIB1 | MIST in Comment | 0.429 (n=2,689) | 0.718 (n=2,744) |
-| NPLIB1 | Corrected MIST | **0.529** (n=2,689) | **0.819** (n=2,744) |
+| NPLIB1 | MIST in Comment, final checkpoint | 0.486 (n=2,689) | 0.821 (n=2,744) |
+| NPLIB1 | MIST, default objective | **0.520** (n=2,689) | **0.827** (n=2,744) |
 | NPLIB1 | Nearest neighbour | 0.321 (n=2,689) | 0.770 (n=2,744) |
 | NPLIB1 | DreaMS NN | 0.376 (n=2,689) | 0.796 (n=2,744) |
 | MassSpecGym | MIST in Comment | 0.457 (n=16,042) | 0.858 (n=16,250) |
-| MassSpecGym | Corrected MIST | **0.571** (n=16,042) | 0.889 (n=16,250) |
+| MassSpecGym | MIST in Comment, final checkpoint | 0.517 (n=16,042) | 0.884 (n=16,250) |
+| MassSpecGym | MIST, default objective | **0.550** (n=16,042) | 0.914 (n=16,250) |
 | MassSpecGym | Nearest neighbour | 0.344 (n=16,042) | 0.940 (n=16,250) |
 | MassSpecGym | DreaMS NN | 0.405 (n=16,042) | **0.955** (n=16,250) |
 
-Fingerprint cosine changes the picture on one of the two random splits. Corrected MIST
-leads on both scaffold splits, as it does on Jaccard, and it also leads on NPLIB1
-random (0.819 versus 0.796 for DreaMS). Only MassSpecGym random, the split with 
-95.3% structural leakage, keeps nearest neighbour ahead on this metric. Binarizing 
-at a single cut discards confidence information that the cosine metric retains,
-which is part of why the two metrics disagree.
+Fingerprint cosine changes the picture on one of the two random splits. Corrected
+MIST leads on both scaffold splits, as it does on Jaccard, and it also leads on
+NPLIB1 random (0.827 versus 0.796 for DreaMS). Only MassSpecGym random, the split
+with 95.3% structural leakage, keeps nearest neighbour ahead on this metric.
+Binarizing at a single cut discards confidence information that the cosine metric
+retains, which is part of why the two metrics disagree.
+
+One consequence of reading the final checkpoint rather than the loss-selected one
+is visible here: it is chosen to maximize thresholded Jaccard, and that is not the
+same checkpoint that maximizes fingerprint cosine. On the scaffold splits the
+earlier, `val_cos_loss`-selected checkpoint of the 200-epoch run scored slightly
+*higher* FP cosine (0.529 and 0.571) than the final checkpoint reported here
+(0.520 and 0.550), while scoring lower Jaccard (0.317 and 0.368 against 0.330 and
+0.375). The two metrics prefer different checkpoints; we report the one that
+optimizes the metric the Comment reports, and note the trade-off.
 
 Retrieval is evaluated by 2D InChIKey hit rate after ranking candidates with the
 predicted fingerprint. For NPLIB1, candidates are PubChem structures with the
@@ -68,27 +142,27 @@ MassSpecGym, candidates are the official formula and mass candidate sets. The
 nearest-neighbour rows rank candidates with the same formula-first predictions
 used in the headline table.
 
-**Corrected MIST leads every retrieval setting, including the two random splits where it
-trails on binary Jaccard.** This is the metric closest to the task the Comment
-motivates, which is ranking candidate structures.
+**MIST leads every retrieval setting, including the two random splits
+where it trails on binary Jaccard.** This is the metric closest to the task the
+Comment motivates, which is ranking candidate structures.
 
 | Dataset | Candidate set | Model | Scaffold top-1 / top-5 / top-10 (↑) | Random top-1 / top-5 / top-10 (↑) |
 | ----------- | ------------------ | ------------------ | ----------------------------------: | --------------------------------: |
-| NPLIB1 | PubChem same formula | Corrected MIST | **0.107 / 0.229 / 0.321** (n=2,689) | **0.612 / 0.736 / 0.786** (n=2,744) |
-| NPLIB1 | PubChem same formula | Nearest neighbour | 0.042 / 0.115 / 0.188 (n=2,689) | 0.348 / 0.506 / 0.556 (n=2,744) |
-| NPLIB1 | PubChem same formula | DreaMS NN | 0.103 / 0.232 / 0.296 (n=2,689) | 0.419 / 0.610 / 0.665 (n=2,744) |
-| MassSpecGym | Official formula | Corrected MIST | **0.219 / 0.395 / 0.490** (n=16,042) | **0.811 / 0.903 / 0.928** (n=16,250) |
+| NPLIB1 | PubChem same formula | MIST, default objective | **0.124 / 0.261 / 0.348** (n=2,689) | **0.618 / 0.738 / 0.785** (n=2,744) |
+| NPLIB1 | PubChem same formula | Nearest neighbour | 0.050 / 0.126 / 0.193 (n=2,689) | 0.439 / 0.611 / 0.663 (n=2,744) |
+| NPLIB1 | PubChem same formula | DreaMS NN | 0.088 / 0.190 / 0.259 (n=2,689) | 0.456 / 0.638 / 0.688 (n=2,744) |
+| MassSpecGym | Official formula | MIST, default objective | **0.231 / 0.382 / 0.473** (n=16,042) | **0.840 / 0.919 / 0.938** (n=16,250) |
 | MassSpecGym | Official formula | Nearest neighbour | 0.093 / 0.181 / 0.248 (n=16,042) | 0.600 / 0.745 / 0.787 (n=16,250) |
 | MassSpecGym | Official formula | DreaMS NN | 0.144 / 0.267 / 0.342 (n=16,042) | 0.633 / 0.787 / 0.832 (n=16,250) |
-| MassSpecGym | Official mass | Corrected MIST | **0.349 / 0.573 / 0.661** (n=16,042) | **0.873 / 0.944 / 0.960** (n=16,250) |
+| MassSpecGym | Official mass | MIST, default objective | **0.347 / 0.541 / 0.632** (n=16,042) | **0.891 / 0.952 / 0.965** (n=16,250) |
 | MassSpecGym | Official mass | Nearest neighbour | 0.122 / 0.181 / 0.219 (n=16,042) | 0.696 / 0.794 / 0.824 (n=16,250) |
 | MassSpecGym | Official mass | DreaMS NN | 0.198 / 0.300 / 0.347 (n=16,042) | 0.737 / 0.844 / 0.877 (n=16,250) |
 
-On MassSpecGym random, nearest neighbour leads Corrected MIST by 0.132 Jaccard but trails
-it by 0.211 top-1 hit rate under the official formula candidate set. A retrieved 
-training fingerprint scores well against its own molecule's fingerprint, but that 
-does not translate into ranking the correct structure highly within a large candidate 
-set.
+On MassSpecGym random, nearest neighbour leads MIST by 0.070 Jaccard but
+trails it by 0.240 top-1 hit rate under the official formula candidate set. A
+retrieved training fingerprint scores well against its own molecule's fingerprint,
+but that does not translate into ranking the correct structure highly within a
+large candidate set.
 
 ## Candidate Policy and the Denominator
 
@@ -110,14 +184,14 @@ On both scaffold splits roughly 60% of the test set is discarded. Our default,
 formula restriction where it can be satisfied, and fall back to
 the whole training set where it cannot. Every test spectrum is answered, so the
 denominator matches MIST's, and the formula prior is retained wherever it exists.
-The table below compares all three policies against Corrected MIST on the full test set.
+The table below compares all three policies against MIST on the full test set.
 
-| Dataset | Split | Corrected MIST (↑) | NN, all train (↑) | NN, formula-first (default) (↑) | _NN, formula-only subset_ |
+| Dataset | Split | MIST, default objective (↑) | NN, all train (↑) | NN, formula-first (default) (↑) | _NN, formula-only subset_ |
 |---|---|---:|---:|---:|---:|
-| NPLIB1 | scaffold | **0.317** (n=2,689) | 0.195 (n=2,689) | 0.212 (n=2,689; fallback=1,661) | _0.293 (n=1,028)_ |
-| NPLIB1 | random | 0.712 (n=2,744) | 0.611 (n=2,744) | **0.720** (n=2,744; fallback=532) | _0.822 (n=2,212)_ |
-| MassSpecGym | scaffold | **0.368** (n=16,042) | 0.230 (n=16,042) | 0.256 (n=16,042; fallback=9,471) | _0.455 (n=6,571)_ |
-| MassSpecGym | random | 0.813 (n=16,250) | 0.850 (n=16,250) | **0.929** (n=16,250; fallback=473) | _0.953 (n=15,777)_ |
+| NPLIB1 | scaffold | **0.330** (n=2,689) | 0.195 (n=2,689) | 0.212 (n=2,689; fallback=1,661) | _0.293 (n=1,028)_ |
+| NPLIB1 | random | **0.733** (n=2,744) | 0.611 (n=2,744) | 0.720 (n=2,744; fallback=532) | _0.822 (n=2,212)_ |
+| MassSpecGym | scaffold | **0.375** (n=16,042) | 0.230 (n=16,042) | 0.256 (n=16,042; fallback=9,471) | _0.455 (n=6,571)_ |
+| MassSpecGym | random | 0.859 (n=16,250) | 0.850 (n=16,250) | **0.929** (n=16,250; fallback=473) | _0.953 (n=15,777)_ |
 
 The formula prior is worth 0.017-0.109 Jaccard over searching the whole training
 set, and it is what makes nearest neighbour competitive on the random splits. The
@@ -135,18 +209,18 @@ each split is solvable by retrieval alone, independently of any model.
 
 On the full test sets:
 
-| Dataset | Split | Leakage (test structures already in training) | FP oracle (NN ceiling) | Best NN | Corrected MIST |
+| Dataset | Split | Leakage (test structures already in training) | FP oracle (NN ceiling) | Best NN | MIST, default objective |
 |---|---|---:|---:|---:|---:|
-| NPLIB1 | scaffold | **1.6%** | 0.435 | 0.258 | **0.317** |
-| NPLIB1 | random | **62.9%** | 0.822 | **0.744** | 0.712 |
-| MassSpecGym | scaffold | **14.3%** | 0.489 | 0.306 | **0.368** |
-| MassSpecGym | random | **95.3%** | 0.972 | **0.944** | 0.813 |
+| NPLIB1 | scaffold | **1.6%** | 0.435 | 0.258 | **0.330** |
+| NPLIB1 | random | **62.9%** | 0.822 | **0.744** | 0.733 |
+| MassSpecGym | scaffold | **14.3%** | 0.489 | 0.306 | **0.375** |
+| MassSpecGym | random | **95.3%** | 0.972 | **0.944** | 0.859 |
 
 The two random splits are close to lookup problems. On MassSpecGym random, 95.3%
 of test structures are already present in training and the retrieval ceiling is
 0.972; DreaMS nearest neighbour reaches 0.944, within 0.028 of a ceiling that
 exists only because the answers are in the training set. On the scaffold splits
-that ceiling falls to 0.435 and 0.489, and Corrected MIST exceeds every nearest-neighbour
+that ceiling falls to 0.435 and 0.489, and MIST exceeds every nearest-neighbour
 variant -- on MassSpecGym scaffold it also exceeds 75% of the retrieval ceiling
 while both NN baselines fall well short of it.
 
@@ -155,19 +229,23 @@ actually scores, where leakage is even more extreme on the random splits:
 
 | Dataset | Model | Scaffold Jaccard (↑) | Random Jaccard (↑) |
 | ----------- | -------------------------- | ----------------------------------: | -----------------------------------: |
-| NPLIB1 | Corrected MIST | **0.340** (n=1,028; **leak=4.2%**) | 0.783 (n=2,212; leak=78.0%) |
+| NPLIB1 | MIST, default objective | **0.359** (n=1,028; **leak=4.2%**) | 0.808 (n=2,212; leak=78.0%) |
 | NPLIB1 | Formula NN | 0.293 (n=1,028; leak=4.2%) | 0.822 (n=2,212; leak=78.0%) |
 | NPLIB1 | Formula DreaMS NN | 0.293 (n=1,028; leak=4.2%) | **0.830** (n=2,212; leak=78.0%) |
 | NPLIB1 | FP oracle (NN upper bound) | _0.326_ (n=1,028; leak=4.2%) | _0.869_ (n=2,212; leak=78.0%) |
-| MassSpecGym | Corrected MIST | 0.464 (n=6,571; leak=34.8%) | 0.827 (n=15,777; leak=98.1%) |
+| MassSpecGym | MIST, default objective | **0.498** (n=6,571; leak=34.8%) | 0.875 (n=15,777; leak=98.1%) |
 | MassSpecGym | Formula NN | 0.455 (n=6,571; leak=34.8%) | 0.953 (n=15,777; leak=98.1%) |
-| MassSpecGym | Formula DreaMS NN | **0.470** (n=6,571; leak=34.8%) | **0.966** (n=15,777; leak=98.1%) |
+| MassSpecGym | Formula DreaMS NN | 0.470 (n=6,571; leak=34.8%) | **0.966** (n=15,777; leak=98.1%) |
 | MassSpecGym | FP oracle (NN upper bound) | _0.516_ (n=6,571; leak=34.8%) | _0.987_ (n=15,777; leak=98.1%) |
 
-On NPLIB1 scaffold, Corrected MIST **exceeds the nearest-neighbour ceiling** (0.340 versus
-0.326), which a retrieval method cannot do by construction. On the random subsets
-every method including the ceiling is compressed into a narrow high band, because
-78% and 98% of those spectra have their own structure in the training set.
+On NPLIB1 scaffold, MIST **exceeds the nearest-neighbour ceiling** (0.359
+versus 0.326), which a retrieval method cannot do by construction. On MassSpecGym
+scaffold it reaches 0.498 against a ceiling of 0.516 -- 96% of the best score any
+retrieval-only method could achieve -- and leads both nearest-neighbour variants on
+this subset, which it did not in revisions of this file before 20261003. On the
+random subsets every method including the ceiling is compressed into a narrow high
+band, because 78% and 98% of those spectra have their own structure in the training
+set.
 
 The Comment interprets the random-to-scaffold drop for DreaMS as evidence of poor
 generalization:
@@ -180,46 +258,6 @@ model at all. The drop is therefore primarily a property of the split and its
 leakage profile rather than evidence that DreaMS specifically fails to
 generalize, and it is also why nearest neighbour retains an advantage over MIST
 on the random splits while losing it on the scaffold splits.
-
-## kNN Sensitivity Check
-
-The nearest-neighbour baselines above use the single most similar training
-spectrum (`k=1`). To check that the result is not an artifact of that choice, we
-sweep `k` over the whole training split with
-`benchmarked_models/nearest_neighbour/04_compute_knn_sensitivity.py`. Note that
-this sweep uses the **all-train** candidate pool, not the formula-first default,
-so its `k=1` column matches the `NN, all train` column. Two fingerprint aggregations 
-are tested: majority vote on each bit, and averaging each bit before scoring the continuous fingerprint. For the binary Jaccard score the averaged fingerprint is thresholded 
-at 0.5, so vote and average give identical Jaccard for odd `k`.
-
-These sweeps do not improve the nearest-neighbour baseline. In all four
-dataset/split settings `k=1` is the strongest kNN Jaccard variant, and adding
-neighbours degrades it sharply on the random splits, where the single nearest
-training spectrum is often the same molecule and averaging in further neighbours
-only dilutes a correct answer. Averaging does help fingerprint cosine on the
-scaffold splits, but not enough to reach Corrected MIST.
-
-| Dataset     | Split    | Corrected MIST Jaccard (↑) | NN k=1 Jaccard (↑) | kNN k=3 Jaccard (↑) | kNN k=5 Jaccard (↑) |
-|-------------|----------|-------------------:|-------------------:|--------------------:|--------------------:|
-| NPLIB1      | scaffold | **0.317** (n=2,689) |              0.195 |               0.195 |               0.189 |
-| NPLIB1      | random   | **0.712** (n=2,744) |              0.611 |               0.512 |               0.457 |
-| MassSpecGym | scaffold | **0.368** (n=16,042) |             0.230 |               0.227 |               0.217 |
-| MassSpecGym | random   |    0.813 (n=16,250) |          **0.850** |               0.735 |               0.668 |
-
-| Dataset     | Split    | Corrected MIST FP Cosine (↑) | NN k=1 FP Cosine (↑) | k=3 vote (↑) | k=3 average (↑) | k=5 vote (↑) | k=5 average (↑) |
-|-------------|----------|---------------------:|---------------------:|-------------:|----------------:|-------------:|----------------:|
-| NPLIB1      | scaffold |            **0.529** |                0.297 |        0.315 |           0.344 |        0.323 |           0.361 |
-| NPLIB1      | random   |            **0.819** |                0.672 |        0.602 |           0.654 |        0.563 |           0.633 |
-| MassSpecGym | scaffold |            **0.571** |                0.314 |        0.325 |           0.349 |        0.330 |           0.363 |
-| MassSpecGym | random   |            **0.889** |                0.869 |        0.780 |           0.830 |        0.733 |           0.800 |
-
-Because this sweep uses the all-train candidate pool, Corrected MIST leads every cell here
-except MassSpecGym random Jaccard. The formula-first policy used in the headline
-table is stronger than any of these kNN variants on the random splits, which is
-why nearest neighbour leads there in the main tables but not in this one. The
-conclusion the sweep supports is narrow and is the one it was run to test: the
-choice of `k=1` is not what makes the nearest-neighbour baseline competitive.
-
 
 ## Notes on Interpretation
 

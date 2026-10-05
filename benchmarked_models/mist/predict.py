@@ -223,13 +223,18 @@ def main(args):
     threshold, val_jaccard, n_val = sweep_threshold(model, config, args.device)
     predictions, loss, jaccard, jaccard_at_half = predict(model, config, args.device, threshold = threshold)
 
-    # Write the predictions
-    output_path = os.path.join(checkpoint_dir, "test_results.pkl")
+    # Write the predictions. Default to the checkpoint's own directory, but
+    # allow redirecting: scoring two checkpoints of one run (for example the
+    # monitor-selected one and last.ckpt) would otherwise overwrite the first
+    # result with the second, since both live in the same directory.
+    output_dir = args.output_dir or checkpoint_dir
+    os.makedirs(output_dir, exist_ok = True)
+    output_path = os.path.join(output_dir, "test_results.pkl")
     pickle_data(predictions, output_path)
     write_json({"loss": loss, "jaccard": jaccard, "threshold": threshold,
                 "val_jaccard": val_jaccard, "n_val": n_val, "n_test": len(predictions),
                 "jaccard_at_0.5": jaccard_at_half},
-               os.path.join(checkpoint_dir, "test_performance.json"))
+               os.path.join(output_dir, "test_performance.json"))
 
 if __name__ == "__main__":
 
@@ -238,6 +243,9 @@ if __name__ == "__main__":
     parser.add_argument("--batch_size", type = int, default = 512, help = "Batch size when running prediction.")
     parser.add_argument("--device", type = str, default = "cuda", help = "The device to use for prediction.")
     parser.add_argument("--checkpoint", type = str, help = "Path to a model checkpoint")
+    parser.add_argument("--output_dir", type = str, default = None,
+                        help = "Where to write test_results.pkl and test_performance.json. "
+                               "Defaults to the checkpoint's directory.")
     args = parser.parse_args()
     if args.checkpoint is None:
         raise ValueError("--checkpoint must point to a checkpoint directory or .ckpt file")

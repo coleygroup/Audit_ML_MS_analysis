@@ -95,9 +95,9 @@ This writes the MIST data under
 under `/path/to/scratch/mist_repro/manifests/runtime_configs/`, and a manifest
 at `/path/to/scratch/mist_repro/manifests/google_drive_mist_outputs_manifest.json`.
 Use that manifest to check split counts, label coverage, and train/val/test
-overlap before launching training. The helper emits both the tuned configs
-reported as `Corrected MIST` and the underperforming paper-style configs reported as
-`MIST in Comment`.
+overlap before launching training. The helper emits both the
+cosine-objective configs reported as `MIST, default objective` and the
+BCE configs reported as the `MIST in Comment` rows.
 
 If you need to rebuild from the original upstream MIST data exports instead,
 the relevant records are:
@@ -227,50 +227,133 @@ MassSpecGym needs no equivalent step.
 
 ## 4. Train and Evaluate MIST
 
-Run from `benchmarked_models/mist`. The first loop reproduces the tuned MIST
-configuration used as the default in this repository. NPLIB1 configs must point
-at the extended data root from Section 3.
+Run from `benchmarked_models/mist`. NPLIB1 configs must point at the extended data
+root from Section 3. Config families and what each one is for are documented in
+[all_configs/README.md](../benchmarked_models/mist/all_configs/README.md).
+
+Two things about the protocol matter before running anything:
+
+- **The reported checkpoint is the final one, not the monitor-selected one.** The
+  `*_e600` configs set `save_last: True` and the reported score is taken from
+  `last.ckpt`. Neither `val_bce_loss` nor `val_cos_loss` tracks mean Jaccard after
+  binarization, and under BCE the monitor returns an epoch-5 to epoch-10
+  checkpoint on the scaffold splits.
+- **`patience` must be raised whenever the budget is raised.** These configs set no
+  `cosine_schedule`, so `train.py` attaches `EarlyStopping(patience=...)`. The
+  `*_e600` configs already set `patience: 600`; a 600-epoch budget left at
+  `patience: 20` stops early and is not comparable.
+
+### 4a. `MIST in Comment`, as published and at its final checkpoint (headline)
+
+The first loop reproduces the Comment's protocol exactly: BCE objective with
+positive-class weighting, hidden size 256, batch size 512, seed 17, no EMA, no
+cosine schedule, 200 epochs, `patience: 20`, and validation-loss checkpointing.
+The second loop is the same objective at the 600-epoch budget, which supplies the
+`MIST in Comment, final checkpoint` row.
 
 ```bash
 cd benchmarked_models/mist
 export MIST_CONFIG_DIR=/path/to/scratch/mist_repro/manifests/runtime_configs
 
 for cfg in \
-  nplib1_random_mist_config.yaml \
-  nplib1_scaffold_mist_config.yaml \
-  massspecgym_random_mist_config.yaml \
-  massspecgym_scaffold_mist_config.yaml
+  nplib1_random_original_mist_config.yaml \
+  nplib1_scaffold_original_mist_config.yaml \
+  msg_random_original_mist_config.yaml \
+  msg_scaffold_original_mist_config.yaml
+do
+  python train.py --config_dir "$MIST_CONFIG_DIR" --config_file "$cfg" --results_dir results
+done
+
+for cfg in \
+  nplib1_random_original_mist_e600_config.yaml \
+  nplib1_scaffold_original_mist_e600_config.yaml \
+  msg_random_original_mist_e600_config.yaml \
+  msg_scaffold_original_mist_e600_config.yaml
 do
   python train.py --config_dir "$MIST_CONFIG_DIR" --config_file "$cfg" --results_dir results
 done
 ```
 
-To reproduce the underperforming `MIST in Comment` setting, run the corresponding
-paper-style configs. These use the older BCE objective with positive-class
-weighting, hidden size 256, batch size 512, seed 17, no EMA, no cosine schedule,
-and validation-based checkpointing.
+`*_original_mist_e600_config.yaml` differs from `*_mist_e600_config.yaml` in
+exactly three lines (`exp_name`, `loss_fn`, `val_monitor`), so comparing the two
+isolates the objective.
+
+
+### 4b. `MIST, default objective`
 
 ```bash
 for cfg in \
-  nplib1_random_original_mist_config.yaml \
-  nplib1_scaffold_original_mist_config.yaml \
-  massspecgym_random_original_mist_config.yaml \
-  massspecgym_scaffold_original_mist_config.yaml
+  nplib1_random_mist_e600_config.yaml \
+  nplib1_scaffold_mist_e600_config.yaml \
+  msg_random_mist_e600_config.yaml \
+  msg_scaffold_mist_e600_config.yaml
 do
   python train.py --config_dir "$MIST_CONFIG_DIR" --config_file "$cfg" --results_dir results
 done
 ```
 
-Then evaluate each run. `train.py` writes runs under lowercase `results/mist/`.
+
+### 4c. `Tuned MIST` (hyperparameter-search row, not a headline row)
+
+This family is not reported in [README.md](README.md); it is retained as a record
+of what a capacity and schedule search buys, and its scores are read directly from
+each run's `test_performance.json`.
+These widen the model to `hidden_size: 1024` and train for `600` epochs under a
+cosine schedule with warmup and EMA. They use batch `128` with
+`accumulate_grad_batches: 4`, so the effective batch stays `512`; at `hidden_size:
+1024` a real batch of `512` exceeds 24 GB because the pairwise attention tensor
+scales as batch x peaks^2 x hidden. Each MassSpecGym run takes roughly two days on
+one card.
+
+```bash
+for cfg in \
+  nplib1_random_mistv2_h1024_sched_e600_config.yaml \
+  nplib1_scaffold_mistv2_h1024_sched_e600_config.yaml \
+  msg_random_mistv2_h1024_sched_e600_config.yaml \
+  msg_scaffold_mistv2_h1024_sched_e600_config.yaml
+do
+  python train.py --config_dir "$MIST_CONFIG_DIR" --config_file "$cfg" --results_dir results
+done
+```
+
+These write to `*_MISTV2_H1024_SCHED_E600_4096_*` and are not wired into
+`scripts/build_readme_tables.py`, whose table families are fixed; the README
+numbers for this row are read directly from each run's `test_performance.json`.
+
+### 4d. Optional: the 200-epoch cosine arm
+
+`*_mist_config.yaml` is the cosine objective under the Comment's original
+200-epoch budget and loss-selected checkpoint. It was the headline row in
+revisions of this repository before 20261003 and is retained for reference.
+
+```bash
+for cfg in \
+  nplib1_random_mist_config.yaml \
+  nplib1_scaffold_mist_config.yaml \
+  msg_random_mist_config.yaml \
+  msg_scaffold_mist_config.yaml
+do
+  python train.py --config_dir "$MIST_CONFIG_DIR" --config_file "$cfg" --results_dir results
+done
+```
+
+### 4e. Evaluate
+
+`train.py` writes runs under lowercase `results/mist/`. `predict.py` fits the
+binarization threshold on the validation split, then scores the test split.
 
 ```bash
 for run in \
-  NPLIB1_MIST_4096_random \
-  NPLIB1_MIST_4096_scaffold \
-  MSG_MIST_4096_random \
-  MSG_MIST_4096_scaffold
+  NPLIB1_MIST_E600_4096_random \
+  NPLIB1_MIST_E600_4096_scaffold \
+  MSG_MIST_E600_4096_random \
+  MSG_MIST_E600_4096_scaffold \
+  NPLIB1_ORIGINAL_MIST_E600_4096_random \
+  NPLIB1_ORIGINAL_MIST_E600_4096_scaffold \
+  MSG_ORIGINAL_MIST_E600_4096_random \
+  MSG_ORIGINAL_MIST_E600_4096_scaffold
 do
-  python predict.py --checkpoint "results/mist/$run" --device cuda
+  python predict.py --checkpoint "results/mist/$run/last.ckpt" --device cuda
 done
 
 for run in \
@@ -283,21 +366,38 @@ do
 done
 ```
 
-`--checkpoint` accepts either a run directory or an explicit `.ckpt` path. Given
-a directory, `predict.py` prefers the checkpoint with the lowest monitored
-value parsed from names of the form `{epoch:03d}-{val_loss:.5f}.ckpt`, and
-falls back to `last.ckpt` when no such name exists. The tuned configs set
-`save_last_only: True` and therefore emit only `last.ckpt`; pass the `.ckpt`
-path directly if a run directory contains several unlabelled checkpoints.
+`--checkpoint` accepts either a run directory or an explicit `.ckpt` path. Given a
+directory, `predict.py` prefers the checkpoint with the lowest monitored value
+parsed from names of the form `{epoch:03d}-{val_loss:.5f}.ckpt`, and falls back to
+`last.ckpt` when no such name exists. **For the `*_e600` runs, pass
+`last.ckpt` explicitly**, as above: those directories also contain the
+monitor-selected checkpoint, which a bare directory argument would pick instead.
+
+To score both checkpoints of one run, use `--output_dir`, or the second result
+overwrites the first (both default to the checkpoint's own directory):
+
+```bash
+python predict.py --checkpoint "results/mist/$run/last.ckpt" \
+  --output_dir "results/mist/${run}_final" --device cuda
+python predict.py --checkpoint "results/mist/$run" \
+  --output_dir "results/mist/${run}_selected" --device cuda
+```
 
 The expected per-run outputs are:
 
 ```text
 benchmarked_models/mist/results/mist/<run>/run.yaml
 benchmarked_models/mist/results/mist/<run>/last.ckpt
+benchmarked_models/mist/results/mist/<run>/<epoch>-<monitor>.ckpt
 benchmarked_models/mist/results/mist/<run>/test_results.pkl
 benchmarked_models/mist/results/mist/<run>/test_performance.json
 ```
+
+`scripts/build_readme_tables.py` expects the headline MIST predictions under the
+run names `{NPLIB1,MSG}_MIST_4096_{random,scaffold}` and the Comment's rows under
+`*_ORIGINAL_MIST_4096_*` and `*_ORIGINAL_MIST_E600LAST_4096_*`. Symlink or copy the
+`*_E600_*` result directories to those names before building the tables.
+
 
 ## 5. Corrected Nearest-Neighbour Baselines
 

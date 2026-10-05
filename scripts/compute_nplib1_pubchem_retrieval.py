@@ -20,7 +20,7 @@ from rdkit import RDLogger
 from rdkit.Chem import AllChem
 
 
-METHODS = ("Corrected MIST", "Nearest neighbour", "DreaMS NN")
+METHODS = ("MIST, default objective", "Nearest neighbour", "DreaMS NN")
 SPLITS = ("random", "scaffold")
 WORKER_QUERIES_BY_FORMULA: dict[str, list[dict[str, Any]]] = {}
 
@@ -113,7 +113,7 @@ def load_mist_queries(
                 metadata,
                 "NPLIB1",
                 split,
-                "Corrected MIST",
+                "MIST, default objective",
                 spec_id,
                 pred,
             )
@@ -128,7 +128,7 @@ def load_mist_queries(
             metadata,
             "NPLIB1",
             split,
-            "Corrected MIST",
+            "MIST, default objective",
             spec_id,
             record["pred"],
         )

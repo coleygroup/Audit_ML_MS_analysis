@@ -266,7 +266,17 @@ def build_full_test_table(args: argparse.Namespace) -> pd.DataFrame:
                     iter_mist_predictions,
                 ),
                 (
-                    "Corrected MIST",
+                    # The Comment's own configuration, trained to a 600-epoch
+                    # budget and scored at its final checkpoint instead of the
+                    # `val_bce_loss`-selected one. Objective unchanged.
+                    "MIST in Comment, final checkpoint",
+                    args.mist_results_root
+                    / f"{mist_prefix}_ORIGINAL_MIST_E600LAST_4096_{split}"
+                    / "test_results.pkl",
+                    iter_mist_predictions,
+                ),
+                (
+                    "MIST, default objective",
                     args.mist_results_root / f"{mist_prefix}_MIST_4096_{split}" / "test_results.pkl",
                     iter_mist_predictions,
                 ),
@@ -337,7 +347,7 @@ def build_formula_filtered_table(args: argparse.Namespace) -> pd.DataFrame:
             leakage = leakage_for_subset(args, dataset, split, subset_ids)
             sources = [
                 (
-                    "Corrected MIST",
+                    "MIST, default objective",
                     mist_path,
                     iter_mist_predictions,
                     "model_prediction_on_same_formula_subset",
@@ -362,7 +372,7 @@ def build_formula_filtered_table(args: argparse.Namespace) -> pd.DataFrame:
                 ),
             ]
             for method, path, loader, candidate_policy in sources:
-                if method == "Corrected MIST" and subset_source is None:
+                if method == "MIST, default objective" and subset_source is None:
                     rows.append(
                         {
                             "dataset": dataset_label,
@@ -394,7 +404,7 @@ def build_formula_filtered_table(args: argparse.Namespace) -> pd.DataFrame:
                         }
                     )
                     continue
-                records = mist_records if method == "Corrected MIST" and mist_records is not None else list(loader(path))
+                records = mist_records if method == "MIST, default objective" and mist_records is not None else list(loader(path))
                 if subset_source is not None:
                     records = [r for r in records if r["spec_id"] in subset_id_set]
                 summary = summarize_prediction_records(records)
@@ -434,7 +444,7 @@ def build_retrieval_table(args: argparse.Namespace) -> pd.DataFrame:
 
     for split in SPLITS:
         for method_key, method_label in [
-            ("tuned_mist", "Corrected MIST"),
+            ("tuned_mist", "MIST, default objective"),
             ("nearest_neighbour", "Nearest neighbour"),
             ("dreams_nn", "DreaMS"),
         ]:
